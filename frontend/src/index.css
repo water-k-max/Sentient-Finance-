@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #050505;
+  color: #e0e0e0;
+  font-family: 'IBM Plex Mono', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-thumb { background: #1a1a1a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #00E5FF; }
+
+/* Glow effect */
+.glow {
+  box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
+}
+
+.glow-text {
+  text-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
+}
+
+/* Animated size bar */
+.size-bar {
+  transition: width 0.3s ease;
+}
+
+/* Pulse animation for active elements */
+@keyframes pulse-cyan {
+  0%, 100% { box-shadow: 0 0 4px rgba(0, 229, 255, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(0, 229, 255, 0.4); }
+}
+
+.pulse-active {
+  animation: pulse-cyan 2s infinite;
+}

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(solana-dev)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(npx *)",
+      "Bash(true)",
+      "Bash(npm pkg *)"
+    ]
+  },
+  "$version": 4
+}

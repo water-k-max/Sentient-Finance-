@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build artifacts
+artifacts/
+cache/
+typechain-types/
+frontend/dist/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Hardhat
+hardhat.config.ts.bak
+
+# Coverage
+coverage/
+coverage.json
+.nyc_output/
+
+# Test gas snapshot
+gas-report.txt
+
+# Temporary files
+*.tmp
+*.bak
