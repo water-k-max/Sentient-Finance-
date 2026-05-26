@@ -1,4 +1,4 @@
-export default function PositionsPanel() {
+export default function PositionsPanel({ symbol = "BTC" }: { symbol?: string }) {
   // Mock position
   const position = {
     side: "Long" as const,
@@ -45,7 +45,7 @@ export default function PositionsPanel() {
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Size</span>
-          <span className="text-white">{position.size} BTC</span>
+          <span className="text-white">{position.size} {symbol}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Leverage</span>

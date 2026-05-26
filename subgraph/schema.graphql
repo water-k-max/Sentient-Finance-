@@ -1,0 +1,58 @@
+type Order @entity {
+  id: ID! # orderId as string
+  trader: Bytes!
+  isBid: Boolean!
+  price: BigInt!
+  size: BigInt!
+  margin: BigInt!
+  leverage: BigInt!
+  timestamp: BigInt!
+  status: OrderStatus!
+}
+
+enum OrderStatus {
+  OPEN
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+}
+
+type Match @entity {
+  id: ID! # "bidOrderId-askOrderId"
+  bidOrderId: BigInt!
+  askOrderId: BigInt!
+  fillPrice: BigInt!
+  fillSize: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+}
+
+type Liquidation @entity {
+  id: ID! # trader address + timestamp
+  trader: Bytes!
+  liquidationPrice: BigInt!
+  remainingMargin: BigInt!
+  timestamp: BigInt!
+  blockNumber: BigInt!
+}
+
+type Position @entity {
+  id: ID! # trader address
+  trader: Bytes!
+  isLong: Boolean!
+  entryPrice: BigInt!
+  size: BigInt!
+  margin: BigInt!
+  leverage: BigInt!
+  liquidationPrice: BigInt!
+  isOpen: Boolean!
+  createdAt: BigInt!
+  closedAt: BigInt
+}
+
+type Stats @entity {
+  id: ID! # "global"
+  totalVolume: BigInt!
+  totalMatches: BigInt!
+  totalLiquidations: BigInt!
+}

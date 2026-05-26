@@ -1,22 +1,22 @@
 import { ethers } from "hardhat";
 
 async function main() {
-  console.log("🚀 Deploying Sentient Finance contracts...\n");
+  console.log("🚀 Deploying Sentient Finance contracts (multi-pair)...\n");
 
   const [deployer] = await ethers.getSigners();
   console.log(`Deploying with: ${deployer.address}\n`);
 
-  // 1. Deploy MockPriceFeed (initial BTC price: $50,000)
   const PRICE_SCALE = 10n ** 8n;
   const initialPrice = 50000n * PRICE_SCALE;
+  const assetId = ethers.keccak256(ethers.toUtf8Bytes("BTC-USD"));
 
+  // 1. Deploy MockPriceFeed
   const MockPriceFeed = await ethers.getContractFactory("MockPriceFeed");
   const mockPriceFeed = await MockPriceFeed.deploy(initialPrice);
   await mockPriceFeed.waitForDeployment();
   console.log(`✅ MockPriceFeed: ${await mockPriceFeed.getAddress()}`);
 
   // 2. Deploy OracleAdapter
-  const assetId = ethers.keccak256(ethers.toUtf8Bytes("BTC-USD"));
   const OracleAdapter = await ethers.getContractFactory("OracleAdapter");
   const oracleAdapter = await OracleAdapter.deploy(
     await mockPriceFeed.getAddress(),
@@ -31,43 +31,61 @@ async function main() {
   await marginVault.waitForDeployment();
   console.log(`✅ MarginVault: ${await marginVault.getAddress()}`);
 
-  // 4. Deploy OrderBook
-  const OrderBook = await ethers.getContractFactory("OrderBook");
-  const orderBook = await OrderBook.deploy(await marginVault.getAddress());
-  await orderBook.waitForDeployment();
-  console.log(`✅ OrderBook: ${await orderBook.getAddress()}`);
+  // 4. Deploy OrderBookFactory
+  const OrderBookFactory = await ethers.getContractFactory("OrderBookFactory");
+  const orderBookFactory = await OrderBookFactory.deploy(await marginVault.getAddress());
+  await orderBookFactory.waitForDeployment();
+  console.log(`✅ OrderBookFactory: ${await orderBookFactory.getAddress()}`);
 
-  // 5. Deploy PerpEngine
+  // 4b. Create OrderBooks for each trading pair
+  const pairs = [
+    { name: "BTC-USD", price: 50000n * PRICE_SCALE },
+    { name: "ETH-USD", price: 3000n * PRICE_SCALE },
+    { name: "SOL-USD", price: 150n * PRICE_SCALE },
+  ];
+  const pairAddresses: Record<string, string> = {};
+
+  for (const pair of pairs) {
+    const pairId = ethers.keccak256(ethers.toUtf8Bytes(pair.name));
+    const tx = await orderBookFactory.createOrderBook(pairId);
+    await tx.wait();
+    const obAddr = await orderBookFactory.pairOrderBooks(pairId);
+    pairAddresses[pair.name] = obAddr;
+    console.log(`  ✅ ${pair.name} OrderBook: ${obAddr}`);
+  }
+
+  // 5. Deploy PerpEngine (multi-pair)
   const PerpEngine = await ethers.getContractFactory("PerpEngine");
-  const perpEngine = await PerpEngine.deploy(
-    await orderBook.getAddress(),
-    await marginVault.getAddress()
-  );
+  const perpEngine = await PerpEngine.deploy(await marginVault.getAddress());
   await perpEngine.waitForDeployment();
   console.log(`✅ PerpEngine: ${await perpEngine.getAddress()}`);
 
-  // 6. Deploy AgentInterface
-  // (Deploy sentinel and LP agent first, then wire)
+  // Register all pairs in PerpEngine
+  for (const pair of pairs) {
+    const pairId = ethers.keccak256(ethers.toUtf8Bytes(pair.name));
+    await perpEngine.registerPair(pairId, pairAddresses[pair.name]);
+    console.log(`  → Registered ${pair.name} in PerpEngine`);
+  }
 
-  // 7. Deploy LiquidationSentinel
+  // 6. Deploy LiquidationSentinel
   const LiquidationSentinel = await ethers.getContractFactory("LiquidationSentinel");
   const sentinel = await LiquidationSentinel.deploy(await marginVault.getAddress());
   await sentinel.waitForDeployment();
   console.log(`✅ LiquidationSentinel: ${await sentinel.getAddress()}`);
 
-  // 8. Deploy LiquidityProviderAgent
+  // 7. Deploy LiquidityProviderAgent (for BTC-USD)
   const LiquidityProviderAgent = await ethers.getContractFactory("LiquidityProviderAgent");
   const lpAgent = await LiquidityProviderAgent.deploy(
-    await orderBook.getAddress(),
+    pairAddresses["BTC-USD"],
     await marginVault.getAddress()
   );
   await lpAgent.waitForDeployment();
   console.log(`✅ LiquidityProviderAgent: ${await lpAgent.getAddress()}`);
 
-  // 6. Deploy AgentInterface (now that we have all addresses)
+  // 8. Deploy AgentInterface (using BTC-USD OrderBook)
   const AgentInterface = await ethers.getContractFactory("AgentInterface");
   const agentInterface = await AgentInterface.deploy(
-    await orderBook.getAddress(),
+    pairAddresses["BTC-USD"],
     await marginVault.getAddress(),
     await sentinel.getAddress(),
     await lpAgent.getAddress(),
@@ -76,8 +94,7 @@ async function main() {
   await agentInterface.waitForDeployment();
   console.log(`✅ AgentInterface: ${await agentInterface.getAddress()}`);
 
-  // 12. Deploy AgentOracle (Somnia JSON API Agent for live CoinGecko prices)
-  // Use the Somnia testnet platform address if available, otherwise skip
+  // 9. Deploy AgentOracle (optional)
   const SOMNIA_AGENTS_PLATFORM = process.env.SOMNIA_AGENTS_PLATFORM_ADDRESS;
   let agentOracle: any = null;
   if (SOMNIA_AGENTS_PLATFORM) {
@@ -85,62 +102,57 @@ async function main() {
     agentOracle = await AgentOracle.deploy(SOMNIA_AGENTS_PLATFORM, assetId);
     await agentOracle.waitForDeployment();
     console.log(`✅ AgentOracle: ${await agentOracle.getAddress()}`);
-    console.log("  → Configured with Somnia JSON API Agent for live CoinGecko BTC/USD");
   } else {
     console.log("⏭️  AgentOracle: Skipping (set SOMNIA_AGENTS_PLATFORM_ADDRESS in .env)");
-    console.log("   → OracleAdapter (mock) will be used for price updates");
   }
 
-  // 9. Wire permissions
+  // 10. Wire permissions
   console.log("\n🔌 Wiring permissions...");
-  await marginVault.setAuthorized(await orderBook.getAddress(), true);
-  console.log("  → OrderBook authorized on MarginVault");
+  for (const pair of pairs) {
+    await marginVault.setAuthorized(pairAddresses[pair.name], true);
+    console.log(`  → ${pair.name} OrderBook authorized on MarginVault`);
+  }
   await marginVault.setAuthorized(await sentinel.getAddress(), true);
   console.log("  → Sentinel authorized on MarginVault");
 
-  // 10. Subscribe reactive hooks
+  // 11. Subscribe reactive hooks
   console.log("\n📡 Subscribing reactive hooks...");
   const ORDER_PLACED_TOPIC = await agentInterface.ORDER_PLACED_TOPIC();
   const PRICE_UPDATED_TOPIC = await agentInterface.PRICE_UPDATED_TOPIC();
-
-  await agentInterface.subscribe(await orderBook.getAddress(), ORDER_PLACED_TOPIC);
-  console.log("  → Subscribed to OrderPlaced events");
+  await agentInterface.subscribe(pairAddresses["BTC-USD"], ORDER_PLACED_TOPIC);
+  console.log("  → Subscribed to BTC-USD OrderPlaced events");
   await agentInterface.subscribe(await oracleAdapter.getAddress(), PRICE_UPDATED_TOPIC);
   console.log("  → Subscribed to PriceUpdated events (OracleAdapter)");
-
-  // Subscribe AgentOracle if deployed
   if (agentOracle) {
     await agentInterface.subscribe(await agentOracle.getAddress(), PRICE_UPDATED_TOPIC);
     console.log("  → Subscribed to PriceUpdated events (AgentOracle)");
   }
 
-  // 11. Fund LP Agent and initialize
+  // 12. Fund + initialize LP Agent
   console.log("\n💰 Funding LP Agent...");
-  const spreadBps = 20; // 0.20%
-  const orderSize = 1n * (10n ** 18n); // 1 BTC notional
-  const midPrice = initialPrice;
-
-  // Deposit collateral for LP agent
+  const spreadBps = 20;
+  const orderSize = 1n * (10n ** 18n);
   await marginVault.connect(deployer).deposit(orderSize * 2n);
-  console.log("  → Deposited collateral for LP Agent");
+  await lpAgent.initialize(spreadBps, orderSize, initialPrice);
+  console.log("  → LP Agent initialized");
 
-  // Initialize LP Agent (needs to be done by owner)
-  await lpAgent.initialize(spreadBps, orderSize, midPrice);
-  console.log("  → LP Agent initialized with spread and orders");
-
+  // Summary
   console.log("\n✅ All contracts deployed and configured!");
   console.log("\n📋 Contract Addresses:");
   console.log("=".repeat(60));
-  console.log(`MockPriceFeed:        ${await mockPriceFeed.getAddress()}`);
-  console.log(`OracleAdapter:        ${await oracleAdapter.getAddress()}`);
-  console.log(`MarginVault:          ${await marginVault.getAddress()}`);
-  console.log(`OrderBook:            ${await orderBook.getAddress()}`);
-  console.log(`PerpEngine:           ${await perpEngine.getAddress()}`);
-  console.log(`LiquidationSentinel:  ${await sentinel.getAddress()}`);
+  console.log(`MockPriceFeed:          ${await mockPriceFeed.getAddress()}`);
+  console.log(`OracleAdapter:          ${await oracleAdapter.getAddress()}`);
+  console.log(`MarginVault:            ${await marginVault.getAddress()}`);
+  console.log(`OrderBookFactory:       ${await orderBookFactory.getAddress()}`);
+  for (const pair of pairs) {
+    console.log(`  ${pair.name}:           ${pairAddresses[pair.name]}`);
+  }
+  console.log(`PerpEngine:             ${await perpEngine.getAddress()}`);
+  console.log(`LiquidationSentinel:    ${await sentinel.getAddress()}`);
   console.log(`LiquidityProviderAgent: ${await lpAgent.getAddress()}`);
-  console.log(`AgentInterface:       ${await agentInterface.getAddress()}`);
+  console.log(`AgentInterface:         ${await agentInterface.getAddress()}`);
   if (agentOracle) {
-    console.log(`AgentOracle:          ${await agentOracle.getAddress()}`);
+    console.log(`AgentOracle:            ${await agentOracle.getAddress()}`);
   }
   console.log("=".repeat(60));
 }

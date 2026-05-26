@@ -2,8 +2,10 @@ import { useState } from "react";
 
 export default function TradeForm({
   onTrade,
+  symbol = "BTC",
 }: {
   onTrade: (type: "buy" | "sell", size: number, leverage: number, price?: number) => void;
+  symbol?: string;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [size, setSize] = useState("0.1");
@@ -145,7 +147,7 @@ export default function TradeForm({
             : "bg-red/15 text-red border border-red/30 hover:bg-red/25"
         }`}
       >
-        {side === "buy" ? "Buy / Long" : "Sell / Short"} {size} BTC @ {leverage}x
+        {side === "buy" ? "Buy / Long" : "Sell / Short"} {size} {symbol} @ {leverage}x
       </button>
     </form>
   );

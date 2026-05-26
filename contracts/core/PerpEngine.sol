@@ -6,23 +6,30 @@ import {IMarginVault} from "../interfaces/IMarginVault.sol";
 
 /// @title PerpEngine — Top-level coordinator for the perpetual swap engine
 /// Single entry point for frontend and agents. Handles funding rates and settlement.
+/// Multi-pair: each trading pair has its own OrderBook, index price, and funding rate.
 contract PerpEngine {
-    IOrderBook public orderBook;
     IMarginVault public marginVault;
     address public owner;
 
+    // pairId → OrderBook
+    mapping(bytes32 => IOrderBook) public pairOrderBooks;
+
+    // pairId → index price
+    mapping(bytes32 => uint256) public indexPrices;
+
+    // pairId → last funding time
+    mapping(bytes32 => uint256) public lastFundingTimes;
+
     // Funding rate configuration
     uint256 public constant FUNDING_INTERVAL = 8 hours;
-    uint256 public lastFundingTime;
-    uint256 public indexPrice;
 
-    // Price history for mark price computation
+    // Price history for mark price computation (per pair)
     struct FillRecord {
         uint256 price;
         uint256 size;
         uint256 timestamp;
     }
-    FillRecord[] public recentFills;
+    mapping(bytes32 => FillRecord[]) public recentFills;
     uint256 public constant FILL_HISTORY_WINDOW = 50;
 
     // Stats
@@ -30,30 +37,46 @@ contract PerpEngine {
     uint256 public openInterest;
     uint256 public insuranceFundBalance;
 
+    // Registered pairs
+    bytes32[] public allPairs;
+    mapping(bytes32 => bool) public pairRegistered;
+
     modifier onlyOwner() {
         require(msg.sender == owner, "PerpEngine: not owner");
         _;
     }
 
-    constructor(address _orderBook, address _marginVault) {
-        orderBook = IOrderBook(_orderBook);
+    constructor(address _marginVault) {
         marginVault = IMarginVault(_marginVault);
         owner = msg.sender;
-        lastFundingTime = block.timestamp;
     }
 
-    /// @notice Open a position via the order book
+    /// @notice Register a new trading pair with its OrderBook
+    function registerPair(bytes32 pairId, address orderBookAddr) external onlyOwner {
+        require(!pairRegistered[pairId], "PerpEngine: pair already registered");
+        require(orderBookAddr != address(0), "PerpEngine: invalid address");
+
+        pairOrderBooks[pairId] = IOrderBook(orderBookAddr);
+        lastFundingTimes[pairId] = block.timestamp;
+        allPairs.push(pairId);
+        pairRegistered[pairId] = true;
+
+        emit PairRegistered(pairId, orderBookAddr);
+    }
+
+    /// @notice Open a position via the order book for a specific pair
     function openPosition(
+        bytes32 pairId,
         bool isLong,
         uint256 size,
         uint256 leverage,
         uint256 limitPrice
     ) external returns (uint256 orderId) {
-        // For a market order, set price to 0 (will match at best available)
-        // For a limit order, use the specified price
+        require(pairRegistered[pairId], "PerpEngine: pair not registered");
+
+        IOrderBook orderBook = pairOrderBooks[pairId];
         uint256 price = limitPrice > 0 ? limitPrice : (isLong ? type(uint256).max : 0);
 
-        // If market order, we need best ask/bid for price
         if (limitPrice == 0) {
             if (isLong) {
                 price = orderBook.bestAsk();
@@ -68,81 +91,84 @@ contract PerpEngine {
     }
 
     /// @notice Close a position by placing an opposing market order
-    function closePosition() external {
-        // Get the trader's position
-        // In production, position is keyed by address in MarginVault
-        // For the hackathon, we place an opposing order at market
-        // This is simplified - full implementation would query position details
+    function closePosition(bytes32 pairId) external {
+        require(pairRegistered[pairId], "PerpEngine: pair not registered");
         revert("PerpEngine: closePosition requires position query - use cancelOrder for now");
     }
 
-    /// @notice Compute current funding rate
-    /// fundingRate = (markPrice - indexPrice) / indexPrice / fundingInterval
-    function computeFundingRate() external view returns (int256) {
-        if (indexPrice == 0) return 0;
+    /// @notice Compute current funding rate for a pair
+    function computeFundingRate(bytes32 pairId) external view returns (int256) {
+        uint256 idxPrice = indexPrices[pairId];
+        if (idxPrice == 0) return 0;
 
-        int256 markPrice = int256Safe(_getMarkPrice());
-        int256 idxPrice = int256Safe(indexPrice);
+        int256 markPrice = int256Safe(_getMarkPrice(pairId));
+        int256 idxPriceSigned = int256Safe(idxPrice);
 
-        int256 diff = markPrice - idxPrice;
-        // Normalize to per-second rate
-        return (diff * 1e18) / idxPrice / int256Safe(FUNDING_INTERVAL);
+        int256 diff = markPrice - idxPriceSigned;
+        return (diff * 1e18) / idxPriceSigned / int256Safe(FUNDING_INTERVAL);
     }
 
-    /// @notice Apply funding payments between longs and shorts
-    function applyFunding() external {
-        require(block.timestamp >= lastFundingTime + FUNDING_INTERVAL, "PerpEngine: funding interval not reached");
+    /// @notice Apply funding payments between longs and shorts for a pair
+    function applyFunding(bytes32 pairId) external {
+        require(pairRegistered[pairId], "PerpEngine: pair not registered");
+        require(
+            block.timestamp >= lastFundingTimes[pairId] + FUNDING_INTERVAL,
+            "PerpEngine: funding interval not reached"
+        );
 
-        int256 fundingRate = int256Safe(_getMarkPrice()) - int256Safe(indexPrice);
-        // Transfer funding between positions
-        // Simplified: in production, iterate positions and transfer
-
-        lastFundingTime = block.timestamp;
-        emit FundingApplied(fundingRate, block.timestamp);
+        int256 fundingRate = int256Safe(_getMarkPrice(pairId)) - int256Safe(indexPrices[pairId]);
+        lastFundingTimes[pairId] = block.timestamp;
+        emit FundingApplied(pairId, fundingRate, block.timestamp);
     }
 
-    /// @notice Get mark price (VWAP of recent fills)
-    function getMarkPrice() external view returns (uint256) {
-        return _getMarkPrice();
+    /// @notice Get mark price (VWAP of recent fills) for a pair
+    function getMarkPrice(bytes32 pairId) external view returns (uint256) {
+        return _getMarkPrice(pairId);
     }
 
-    /// @notice Set index price (called by oracle adapter reactively)
-    function setIndexPrice(uint256 price) external {
+    /// @notice Set index price for a pair (called by oracle adapter reactively)
+    function setIndexPrice(bytes32 pairId, uint256 price) external {
         require(price > 0, "PerpEngine: invalid price");
-        indexPrice = price;
+        indexPrices[pairId] = price;
     }
 
     /// @notice Record a fill for mark price computation
-    function recordFill(uint256 price, uint256 size) external {
-        recentFills.push(FillRecord(price, size, block.timestamp));
+    function recordFill(bytes32 pairId, uint256 price, uint256 size) external {
+        recentFills[pairId].push(FillRecord(price, size, block.timestamp));
         totalVolume += size;
 
-        if (recentFills.length > FILL_HISTORY_WINDOW) {
-            // Remove oldest fill
-            for (uint256 i = 0; i < recentFills.length - 1; i++) {
-                recentFills[i] = recentFills[i + 1];
+        if (recentFills[pairId].length > FILL_HISTORY_WINDOW) {
+            for (uint256 i = 0; i < recentFills[pairId].length - 1; i++) {
+                recentFills[pairId][i] = recentFills[pairId][i + 1];
             }
-            recentFills.pop();
+            recentFills[pairId].pop();
         }
     }
 
-    event FundingApplied(int256 fundingRate, uint256 timestamp);
-    event PositionOpened(address indexed trader, uint256 orderId);
+    /// @notice Get all registered pairs
+    function getAllPairs() external view returns (bytes32[] memory) {
+        return allPairs;
+    }
+
+    event FundingApplied(bytes32 pairId, int256 fundingRate, uint256 timestamp);
+    event PositionOpened(bytes32 pairId, address indexed trader, uint256 orderId);
+    event PairRegistered(bytes32 pairId, address orderBookAddress);
 
     // ============ Internal Functions ============
 
-    function _getMarkPrice() internal view returns (uint256) {
-        if (recentFills.length == 0) return indexPrice;
+    function _getMarkPrice(bytes32 pairId) internal view returns (uint256) {
+        FillRecord[] memory fills = recentFills[pairId];
+        if (fills.length == 0) return indexPrices[pairId];
 
         uint256 totalPriceWeighted = 0;
         uint256 totalSize = 0;
 
-        for (uint256 i = 0; i < recentFills.length; i++) {
-            totalPriceWeighted += recentFills[i].price * recentFills[i].size;
-            totalSize += recentFills[i].size;
+        for (uint256 i = 0; i < fills.length; i++) {
+            totalPriceWeighted += fills[i].price * fills[i].size;
+            totalSize += fills[i].size;
         }
 
-        if (totalSize == 0) return indexPrice;
+        if (totalSize == 0) return indexPrices[pairId];
         return totalPriceWeighted / totalSize;
     }
 

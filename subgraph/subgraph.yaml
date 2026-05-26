@@ -1,0 +1,51 @@
+specVersion: 1.0.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: OrderBook
+    network: somnia-testnet
+    source:
+      abi: OrderBook
+      address: "0x0000000000000000000000000000000000000000"
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Order
+        - Match
+      abis:
+        - name: OrderBook
+          file: ../artifacts/contracts/core/OrderBook.sol/OrderBook.json
+      eventHandlers:
+        - event: OrderPlaced(uint256,address,bool,uint256,uint256)
+          handler: handleOrderPlaced
+        - event: OrderMatched(indexed uint256,indexed uint256,uint256,uint256)
+          handler: handleOrderMatched
+        - event: OrderCancelled(indexed uint256)
+          handler: handleOrderCancelled
+      file: ./mappings/mapping.ts
+
+  - kind: ethereum
+    name: MarginVault
+    network: somnia-testnet
+    source:
+      abi: MarginVault
+      address: "0x0000000000000000000000000000000000000000"
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      entities:
+        - Liquidation
+        - Position
+      abis:
+        - name: MarginVault
+          file: ../artifacts/contracts/core/MarginVault.sol/MarginVault.json
+      eventHandlers:
+        - event: LiquidationExecuted(indexed address,uint256,uint256)
+          handler: handleLiquidationExecuted
+        - event: PositionSettled(indexed address,indexed address,uint256,uint256)
+          handler: handlePositionSettled
+      file: ./mappings/mapping.ts
