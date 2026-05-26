@@ -1,7 +1,7 @@
 import { ethers } from "hardhat";
 
 async function main() {
-  console.log("🚀 Deploying Sentient Finance contracts (multi-pair)...\n");
+  console.log("🚀 Deploying Sentient Finance contracts (3-agent integration)...\n");
 
   const [deployer] = await ethers.getSigners();
   console.log(`Deploying with: ${deployer.address}\n`);
@@ -31,13 +31,13 @@ async function main() {
   await marginVault.waitForDeployment();
   console.log(`✅ MarginVault: ${await marginVault.getAddress()}`);
 
-  // 4. Deploy PerpEngine (before factory so factory can reference it)
+  // 4. Deploy PerpEngine (before factory)
   const PerpEngine = await ethers.getContractFactory("PerpEngine");
   const perpEngine = await PerpEngine.deploy(await marginVault.getAddress());
   await perpEngine.waitForDeployment();
   console.log(`✅ PerpEngine: ${await perpEngine.getAddress()}`);
 
-  // 5. Deploy OrderBookFactory (needs perpEngine address)
+  // 5. Deploy OrderBookFactory
   const OrderBookFactory = await ethers.getContractFactory("OrderBookFactory");
   const orderBookFactory = await OrderBookFactory.deploy(
     await marginVault.getAddress(),
@@ -46,7 +46,7 @@ async function main() {
   await orderBookFactory.waitForDeployment();
   console.log(`✅ OrderBookFactory: ${await orderBookFactory.getAddress()}`);
 
-  // 4b. Create OrderBooks for each trading pair
+  // 5b. Create OrderBooks for each trading pair
   const pairs = [
     { name: "BTC-USD", price: 50000n * PRICE_SCALE },
     { name: "ETH-USD", price: 3000n * PRICE_SCALE },
@@ -76,7 +76,20 @@ async function main() {
   await sentinel.waitForDeployment();
   console.log(`✅ LiquidationSentinel: ${await sentinel.getAddress()}`);
 
-  // 7. Deploy LiquidityProviderAgent (for BTC-USD)
+  // 7. Deploy SentimentOracle (all 3 Somnia agents)
+  const SOMNIA_AGENTS_PLATFORM = process.env.SOMNIA_AGENTS_PLATFORM_ADDRESS;
+  let sentimentOracle: any = null;
+  if (SOMNIA_AGENTS_PLATFORM) {
+    const SentimentOracle = await ethers.getContractFactory("SentimentOracle");
+    sentimentOracle = await SentimentOracle.deploy(SOMNIA_AGENTS_PLATFORM);
+    await sentimentOracle.waitForDeployment();
+    console.log(`✅ SentimentOracle: ${await sentimentOracle.getAddress()}`);
+    console.log("  → Integrates JSON API Agent + LLM Inference + LLM Parse Website");
+  } else {
+    console.log("⏭️  SentimentOracle: Skipping (set SOMNIA_AGENTS_PLATFORM_ADDRESS in .env)");
+  }
+
+  // 8. Deploy LiquidityProviderAgent (base, for BTC-USD)
   const LiquidityProviderAgent = await ethers.getContractFactory("LiquidityProviderAgent");
   const lpAgent = await LiquidityProviderAgent.deploy(
     pairAddresses["BTC-USD"],
@@ -85,7 +98,22 @@ async function main() {
   await lpAgent.waitForDeployment();
   console.log(`✅ LiquidityProviderAgent: ${await lpAgent.getAddress()}`);
 
-  // 8. Deploy AgentInterface (using BTC-USD OrderBook)
+  // 8b. Deploy EnhancedLiquidityProviderAgent (AI-augmented)
+  let enhancedLpAgent: any = null;
+  if (sentimentOracle) {
+    const EnhancedLPAgent = await ethers.getContractFactory("EnhancedLiquidityProviderAgent");
+    enhancedLpAgent = await EnhancedLPAgent.deploy(
+      pairAddresses["BTC-USD"],
+      await marginVault.getAddress(),
+      await sentimentOracle.getAddress()
+    );
+    await enhancedLpAgent.waitForDeployment();
+    console.log(`✅ EnhancedLiquidityProviderAgent: ${await enhancedLpAgent.getAddress()}`);
+  } else {
+    console.log("⏭️  EnhancedLPAgent: Skipping (requires SentimentOracle)");
+  }
+
+  // 9. Deploy AgentInterface
   const AgentInterface = await ethers.getContractFactory("AgentInterface");
   const agentInterface = await AgentInterface.deploy(
     pairAddresses["BTC-USD"],
@@ -97,19 +125,25 @@ async function main() {
   await agentInterface.waitForDeployment();
   console.log(`✅ AgentInterface: ${await agentInterface.getAddress()}`);
 
-  // 9. Deploy AgentOracle (optional)
-  const SOMNIA_AGENTS_PLATFORM = process.env.SOMNIA_AGENTS_PLATFORM_ADDRESS;
+  // 9b. Wire SentimentOracle + Enhanced LP Agent into AgentInterface
+  if (sentimentOracle && enhancedLpAgent) {
+    await agentInterface.setSentimentContracts(
+      await sentimentOracle.getAddress(),
+      await enhancedLpAgent.getAddress()
+    );
+    console.log("  → SentimentOracle + Enhanced LP Agent wired into AgentInterface");
+  }
+
+  // 10. Deploy AgentOracle (JSON API Agent only)
   let agentOracle: any = null;
   if (SOMNIA_AGENTS_PLATFORM) {
     const AgentOracle = await ethers.getContractFactory("AgentOracle");
     agentOracle = await AgentOracle.deploy(SOMNIA_AGENTS_PLATFORM, assetId);
     await agentOracle.waitForDeployment();
     console.log(`✅ AgentOracle: ${await agentOracle.getAddress()}`);
-  } else {
-    console.log("⏭️  AgentOracle: Skipping (set SOMNIA_AGENTS_PLATFORM_ADDRESS in .env)");
   }
 
-  // 10. Wire permissions
+  // 11. Wire permissions
   console.log("\n🔌 Wiring permissions...");
   for (const pair of pairs) {
     await marginVault.setAuthorized(pairAddresses[pair.name], true);
@@ -118,7 +152,7 @@ async function main() {
   await marginVault.setAuthorized(await sentinel.getAddress(), true);
   console.log("  → Sentinel authorized on MarginVault");
 
-  // 11. Subscribe reactive hooks
+  // 12. Subscribe reactive hooks
   console.log("\n📡 Subscribing reactive hooks...");
   const ORDER_PLACED_TOPIC = await agentInterface.ORDER_PLACED_TOPIC();
   const PRICE_UPDATED_TOPIC = await agentInterface.PRICE_UPDATED_TOPIC();
@@ -131,33 +165,53 @@ async function main() {
     console.log("  → Subscribed to PriceUpdated events (AgentOracle)");
   }
 
-  // 12. Fund + initialize LP Agent
-  console.log("\n💰 Funding LP Agent...");
+  // 13. Fund + initialize LP Agents
+  console.log("\n💰 Funding LP Agents...");
   const spreadBps = 20;
   const orderSize = 1n * (10n ** 18n);
-  await marginVault.connect(deployer).deposit(orderSize * 2n);
+  await marginVault.connect(deployer).deposit(orderSize * 4n);
   await lpAgent.initialize(spreadBps, orderSize, initialPrice);
-  console.log("  → LP Agent initialized");
+  console.log("  → Base LP Agent initialized");
+
+  if (enhancedLpAgent) {
+    await marginVault.connect(deployer).deposit(orderSize * 2n);
+    await enhancedLpAgent.initialize(spreadBps, orderSize, initialPrice);
+    console.log("  → Enhanced LP Agent initialized");
+  }
 
   // Summary
   console.log("\n✅ All contracts deployed and configured!");
   console.log("\n📋 Contract Addresses:");
   console.log("=".repeat(60));
-  console.log(`MockPriceFeed:          ${await mockPriceFeed.getAddress()}`);
-  console.log(`OracleAdapter:          ${await oracleAdapter.getAddress()}`);
-  console.log(`MarginVault:            ${await marginVault.getAddress()}`);
-  console.log(`OrderBookFactory:       ${await orderBookFactory.getAddress()}`);
+  console.log(`MockPriceFeed:              ${await mockPriceFeed.getAddress()}`);
+  console.log(`OracleAdapter:              ${await oracleAdapter.getAddress()}`);
+  console.log(`MarginVault:                ${await marginVault.getAddress()}`);
+  console.log(`OrderBookFactory:           ${await orderBookFactory.getAddress()}`);
   for (const pair of pairs) {
-    console.log(`  ${pair.name}:           ${pairAddresses[pair.name]}`);
+    console.log(`  ${pair.name}:               ${pairAddresses[pair.name]}`);
   }
-  console.log(`PerpEngine:             ${await perpEngine.getAddress()}`);
-  console.log(`LiquidationSentinel:    ${await sentinel.getAddress()}`);
-  console.log(`LiquidityProviderAgent: ${await lpAgent.getAddress()}`);
-  console.log(`AgentInterface:         ${await agentInterface.getAddress()}`);
+  console.log(`PerpEngine:                 ${await perpEngine.getAddress()}`);
+  console.log(`LiquidationSentinel:        ${await sentinel.getAddress()}`);
+  console.log(`LiquidityProviderAgent:     ${await lpAgent.getAddress()}`);
+  console.log(`AgentInterface:             ${await agentInterface.getAddress()}`);
+  if (sentimentOracle) {
+    console.log(`SentimentOracle:            ${await sentimentOracle.getAddress()}`);
+  }
+  if (enhancedLpAgent) {
+    console.log(`EnhancedLiquidityProviderAgent: ${await enhancedLpAgent.getAddress()}`);
+  }
   if (agentOracle) {
-    console.log(`AgentOracle:            ${await agentOracle.getAddress()}`);
+    console.log(`AgentOracle:                ${await agentOracle.getAddress()}`);
   }
   console.log("=".repeat(60));
+
+  if (SOMNIA_AGENTS_PLATFORM) {
+    console.log("\n🤖 All 3 Somnia Agents Integrated:");
+    console.log("  1. JSON API Agent (CoinGecko) → AgentOracle + SentimentOracle");
+    console.log("  2. LLM Inference Agent (sentiment + volatility) → SentimentOracle");
+    console.log("  3. LLM Parse Website Agent (CoinDesk) → SentimentOracle");
+    console.log("  → Enhanced LP Agent adjusts spread based on AI sentiment + volatility");
+  }
 }
 
 main()
