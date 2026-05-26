@@ -4,6 +4,11 @@ import TradeForm from "../components/TradeForm";
 import PositionsPanel from "../components/PositionsPanel";
 import EventFeed from "../components/EventFeed";
 import PriceChart from "../components/PriceChart";
+import { useWallet } from "../hooks/useWallet";
+import { useOrderBook } from "../hooks/useOrderBook";
+import { usePosition } from "../hooks/usePosition";
+import { useEventFeed } from "../hooks/useEventFeed";
+import { isDeployed } from "../config/addresses";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
 
@@ -17,14 +22,24 @@ export default function TradingView() {
   const [pair, setPair] = useState<TradingPair>("BTC-USD");
   const config = PAIR_CONFIG[pair];
 
-  const [bids, setBids] = useState<Array<{ price: number; size: number }>>([]);
-  const [asks, setAsks] = useState<Array<{ price: number; size: number }>>([]);
-  const [events, setEvents] = useState<string[]>([]);
+  // Live hooks (fall back to mock when not deployed)
+  const liveOrderBook = useOrderBook(pair);
+  const { address } = useWallet();
+  const livePosition = usePosition(address);
+  const liveEvents = useEventFeed();
+  const isLive = isDeployed();
+
+  // Mock data for pre-deployment
+  const [mockBids, setMockBids] = useState<Array<{ price: number; size: number }>>([]);
+  const [mockAsks, setMockAsks] = useState<Array<{ price: number; size: number }>>([]);
+  const [mockEvents, setMockEvents] = useState<string[]>([]);
   const [priceHistory, setPriceHistory] = useState<number[]>([]);
 
-  // Reinitialize data when pair changes
+  // Reinitialize mock data when pair changes (only used when not deployed)
   useEffect(() => {
-    const { midPrice, step, vol, symbol } = config;
+    if (isLive) return; // Skip mock data when live
+
+    const { midPrice, step, vol } = config;
     const initialBids = Array.from({ length: 12 }, (_, i) => ({
       price: midPrice - (i + 1) * step,
       size: parseFloat((Math.random() * 2 + 0.1).toFixed(4)),
@@ -33,32 +48,34 @@ export default function TradingView() {
       price: midPrice + (i + 1) * step,
       size: parseFloat((Math.random() * 2 + 0.1).toFixed(4)),
     }));
-    setBids(initialBids);
-    setAsks(initialAsks);
+    setMockBids(initialBids);
+    setMockAsks(initialAsks);
 
     const history = Array.from({ length: 50 }, (_, i) =>
       midPrice + Math.sin(i * 0.2) * vol + (Math.random() - 0.5) * vol / 2
     );
     setPriceHistory(history);
 
-    setEvents([
-      `LP Agent placed bid at $${(midPrice - step).toLocaleString()} | 1.0000 ${symbol}`,
-      `LP Agent placed ask at $${(midPrice + step).toLocaleString()} | 1.0000 ${symbol}`,
-      `Order matched: 0.5000 ${symbol} @ $${midPrice.toLocaleString()}`,
-      `Sentinel monitoring 3 open ${symbol} positions`,
+    setMockEvents([
+      `LP Agent placed bid at $${(midPrice - step).toLocaleString()} | 1.0000 ${config.symbol}`,
+      `LP Agent placed ask at $${(midPrice + step).toLocaleString()} | 1.0000 ${config.symbol}`,
+      `Order matched: 0.5000 ${config.symbol} @ $${midPrice.toLocaleString()}`,
+      `Sentinel monitoring 3 open ${config.symbol} positions`,
     ]);
-  }, [pair, config]);
+  }, [pair, config, isLive]);
 
   useEffect(() => {
+    if (isLive) return; // Skip mock updates when live
+
     const interval = setInterval(() => {
       const { step } = config;
-      setBids((prev) =>
+      setMockBids((prev) =>
         prev.map((b) => ({
           ...b,
           size: parseFloat(Math.max(0.05, b.size + (Math.random() - 0.5) * 0.3).toFixed(4)),
         }))
       );
-      setAsks((prev) =>
+      setMockAsks((prev) =>
         prev.map((a) => ({
           ...a,
           size: parseFloat(Math.max(0.05, a.size + (Math.random() - 0.5) * 0.3).toFixed(4)),
@@ -72,11 +89,25 @@ export default function TradingView() {
       });
     }, 3000);
     return () => clearInterval(interval);
-  }, [pair, config]);
+  }, [pair, config, isLive]);
+
+  // Use live or mock data
+  const bids = isLive
+    ? liveOrderBook.bids.map((b) => ({ price: b.price, size: b.size }))
+    : mockBids;
+  const asks = isLive
+    ? liveOrderBook.asks.map((a) => ({ price: a.price, size: a.size }))
+    : mockAsks;
+  const events = isLive
+    ? liveEvents.map((e) => e.message)
+    : mockEvents;
 
   const handleTrade = (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
-    const event = `${type === "buy" ? "Buy" : "Sell"} order placed: ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x`;
-    setEvents((prev) => [event, ...prev]);
+    if (!isLive) {
+      const event = `${type === "buy" ? "Buy" : "Sell"} order placed: ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x`;
+      setMockEvents((prev) => [event, ...prev]);
+    }
+    // When live: call PerpEngine.openPosition(pair, ...) via signer
   };
 
   return (
@@ -95,7 +126,11 @@ export default function TradingView() {
             <option value="SOL-USD">SOL-USD</option>
           </select>
         </div>
-        <OrderBook bids={bids} asks={asks} />
+        {isLive && liveOrderBook.loading ? (
+          <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">Loading...</div>
+        ) : (
+          <OrderBook bids={bids} asks={asks} />
+        )}
       </div>
 
       {/* Center: Chart + Trade Form */}
@@ -104,18 +139,21 @@ export default function TradingView() {
           <PriceChart data={priceHistory} pair={pair} />
         </div>
         <div className="p-4">
-          <TradeForm onTrade={handleTrade} symbol={config.symbol} />
+          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} />
         </div>
       </div>
 
       {/* Right: Positions + Events */}
       <div className="col-span-3 flex flex-col">
         <div className="border-b border-border">
-          <PositionsPanel symbol={config.symbol} />
+          <PositionsPanel
+            symbol={config.symbol}
+            position={isLive && livePosition ? livePosition : undefined}
+          />
         </div>
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="px-4 py-2 border-b border-border text-sm text-gray-400 font-heading">
-            AGENT ACTIVITY
+            AGENT ACTIVITY {isLive && <span className="text-green ml-2">● LIVE</span>}
           </div>
           <EventFeed events={events} />
         </div>

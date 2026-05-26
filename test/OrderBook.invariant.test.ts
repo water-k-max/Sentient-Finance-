@@ -20,7 +20,7 @@ describe("OrderBook — Invariant Tests", function () {
     await marginVault.waitForDeployment();
 
     const OrderBookFactory = await ethers.getContractFactory("OrderBook");
-    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress());
+    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
     await orderBook.waitForDeployment();
 
     await marginVault.setAuthorized(await orderBook.getAddress(), true);
@@ -40,7 +40,7 @@ describe("OrderBook — Invariant Tests", function () {
             const mvFactory = await ethers.getContractFactory("MarginVault");
             const mv = await mvFactory.deploy();
             await mv.waitForDeployment();
-            const ob = await obFactory.deploy(await mv.getAddress());
+            const ob = await obFactory.deploy(await mv.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
             await ob.waitForDeployment();
             await mv.setAuthorized(await ob.getAddress(), true);
             await mv.connect(trader).deposit(1000000n * SIZE_SCALE);
@@ -75,7 +75,7 @@ describe("OrderBook — Invariant Tests", function () {
             const mvFactory = await ethers.getContractFactory("MarginVault");
             const mv = await mvFactory.deploy();
             await mv.waitForDeployment();
-            const ob = await obFactory.deploy(await mv.getAddress());
+            const ob = await obFactory.deploy(await mv.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
             await ob.waitForDeployment();
             await mv.setAuthorized(await ob.getAddress(), true);
             await mv.connect(trader).deposit(1000000n * SIZE_SCALE);

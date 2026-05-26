@@ -4,6 +4,11 @@ pragma solidity ^0.8.24;
 import {Order, OrderStatus, IOrderBook} from "../interfaces/IOrderBook.sol";
 import {IMarginVault} from "../interfaces/IMarginVault.sol";
 
+/// @title IPerpEngine — Minimal interface for OrderBook to record fills
+interface IPerpEngine {
+    function recordFill(bytes32 pairId, uint256 price, uint256 size) external;
+}
+
 /// @title OrderBook — On-chain perpetual swap order book with native matching
 contract OrderBook is IOrderBook {
     // ============ State ============
@@ -14,6 +19,8 @@ contract OrderBook is IOrderBook {
     uint256 public override nextOrderId;
 
     IMarginVault public marginVault;
+    IPerpEngine public perpEngine;
+    bytes32 public pairId;
     address public owner;
 
     modifier onlyOwner() {
@@ -21,8 +28,10 @@ contract OrderBook is IOrderBook {
         _;
     }
 
-    constructor(address _marginVault) {
+    constructor(address _marginVault, address _perpEngine, bytes32 _pairId) {
         marginVault = IMarginVault(_marginVault);
+        perpEngine = IPerpEngine(_perpEngine);
+        pairId = _pairId;
         owner = msg.sender;
     }
 
@@ -189,6 +198,11 @@ contract OrderBook is IOrderBook {
             // Settle positions via MarginVault
             // Bid = long (buying), Ask = short (selling)
             marginVault.settlePosition(bid.trader, ask.trader, fillPrice, fillSize, bid.leverage, ask.leverage);
+
+            // Record fill for mark price computation in PerpEngine
+            if (address(perpEngine) != address(0)) {
+                perpEngine.recordFill(pairId, fillPrice, fillSize);
+            }
 
             emit OrderMatched(bidId, askId, fillPrice, fillSize);
         }

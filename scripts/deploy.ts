@@ -31,9 +31,18 @@ async function main() {
   await marginVault.waitForDeployment();
   console.log(`✅ MarginVault: ${await marginVault.getAddress()}`);
 
-  // 4. Deploy OrderBookFactory
+  // 4. Deploy PerpEngine (before factory so factory can reference it)
+  const PerpEngine = await ethers.getContractFactory("PerpEngine");
+  const perpEngine = await PerpEngine.deploy(await marginVault.getAddress());
+  await perpEngine.waitForDeployment();
+  console.log(`✅ PerpEngine: ${await perpEngine.getAddress()}`);
+
+  // 5. Deploy OrderBookFactory (needs perpEngine address)
   const OrderBookFactory = await ethers.getContractFactory("OrderBookFactory");
-  const orderBookFactory = await OrderBookFactory.deploy(await marginVault.getAddress());
+  const orderBookFactory = await OrderBookFactory.deploy(
+    await marginVault.getAddress(),
+    await perpEngine.getAddress()
+  );
   await orderBookFactory.waitForDeployment();
   console.log(`✅ OrderBookFactory: ${await orderBookFactory.getAddress()}`);
 
@@ -53,12 +62,6 @@ async function main() {
     pairAddresses[pair.name] = obAddr;
     console.log(`  ✅ ${pair.name} OrderBook: ${obAddr}`);
   }
-
-  // 5. Deploy PerpEngine (multi-pair)
-  const PerpEngine = await ethers.getContractFactory("PerpEngine");
-  const perpEngine = await PerpEngine.deploy(await marginVault.getAddress());
-  await perpEngine.waitForDeployment();
-  console.log(`✅ PerpEngine: ${await perpEngine.getAddress()}`);
 
   // Register all pairs in PerpEngine
   for (const pair of pairs) {

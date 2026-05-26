@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IOrderBook} from "../interfaces/IOrderBook.sol";
-import {IMarginVault} from "../interfaces/IMarginVault.sol";
+import {IMarginVault, Position} from "../interfaces/IMarginVault.sol";
 
 /// @title PerpEngine — Top-level coordinator for the perpetual swap engine
 /// Single entry point for frontend and agents. Handles funding rates and settlement.
@@ -93,7 +93,20 @@ contract PerpEngine {
     /// @notice Close a position by placing an opposing market order
     function closePosition(bytes32 pairId) external {
         require(pairRegistered[pairId], "PerpEngine: pair not registered");
-        revert("PerpEngine: closePosition requires position query - use cancelOrder for now");
+
+        Position memory pos = marginVault.getPosition(msg.sender);
+        require(pos.isOpen, "PerpEngine: no open position");
+
+        IOrderBook orderBook = pairOrderBooks[pairId];
+
+        // Place opposing order: if long, sell; if short, buy
+        bool isBid = !pos.isLong; // Long → sell (ask), Short → buy (bid)
+        uint256 price = isBid ? orderBook.bestAsk() : orderBook.bestBid();
+        require(price > 0, "PerpEngine: no liquidity to close");
+
+        // Close full position size
+        uint256 orderId = orderBook.placeOrder(isBid, price, pos.size, pos.leverage);
+        emit PositionClosed(pairId, msg.sender, orderId);
     }
 
     /// @notice Compute current funding rate for a pair
@@ -152,6 +165,7 @@ contract PerpEngine {
 
     event FundingApplied(bytes32 pairId, int256 fundingRate, uint256 timestamp);
     event PositionOpened(bytes32 pairId, address indexed trader, uint256 orderId);
+    event PositionClosed(bytes32 pairId, address indexed trader, uint256 orderId);
     event PairRegistered(bytes32 pairId, address orderBookAddress);
 
     // ============ Internal Functions ============

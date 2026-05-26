@@ -9,6 +9,7 @@ import {OrderBook} from "../core/OrderBook.sol";
 contract OrderBookFactory {
     address public owner;
     address public marginVault;
+    address public perpEngine;
 
     // pairId → OrderBook address
     mapping(bytes32 => address) public pairOrderBooks;
@@ -20,8 +21,9 @@ contract OrderBookFactory {
         _;
     }
 
-    constructor(address _marginVault) {
+    constructor(address _marginVault, address _perpEngine) {
         marginVault = _marginVault;
+        perpEngine = _perpEngine;
         owner = msg.sender;
     }
 
@@ -29,7 +31,7 @@ contract OrderBookFactory {
     function createOrderBook(bytes32 pairId) external onlyOwner returns (address) {
         require(!pairExists[pairId], "Factory: pair already exists");
 
-        OrderBook orderBook = new OrderBook(marginVault);
+        OrderBook orderBook = new OrderBook(marginVault, perpEngine, pairId);
         address orderBookAddr = address(orderBook);
 
         pairOrderBooks[pairId] = orderBookAddr;

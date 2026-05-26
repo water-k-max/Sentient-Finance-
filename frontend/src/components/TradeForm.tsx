@@ -3,9 +3,11 @@ import { useState } from "react";
 export default function TradeForm({
   onTrade,
   symbol = "BTC",
+  isLive: _isLive = false,
 }: {
   onTrade: (type: "buy" | "sell", size: number, leverage: number, price?: number) => void;
   symbol?: string;
+  isLive?: boolean;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [size, setSize] = useState("0.1");

@@ -21,7 +21,7 @@ describe("LiquidationSentinel", function () {
     await marginVault.waitForDeployment();
 
     const OrderBookFactory = await ethers.getContractFactory("OrderBook");
-    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress());
+    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
     await orderBook.waitForDeployment();
 
     const SentinelFactory = await ethers.getContractFactory("LiquidationSentinel");

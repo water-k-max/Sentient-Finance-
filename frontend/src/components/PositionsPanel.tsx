@@ -1,18 +1,40 @@
-export default function PositionsPanel({ symbol = "BTC" }: { symbol?: string }) {
-  // Mock position
-  const position = {
-    side: "Long" as const,
-    entryPrice: 49800,
-    markPrice: 50100,
-    size: 0.5,
-    margin: 2490,
-    leverage: 10,
-    unrealizedPnl: 150,
-    health: 112,
-    liqPrice: 44820,
-  };
+interface PositionData {
+  isLong: boolean;
+  entryPrice: number;
+  size: number;
+  margin: number;
+  leverage: number;
+  unrealizedPnl: number;
+  liquidationPrice: number;
+  isOpen: boolean;
+  health: number;
+}
 
-  if (!position) {
+const MOCK_POSITION: PositionData & { markPrice: number } = {
+  isLong: true,
+  entryPrice: 49800,
+  markPrice: 50100,
+  size: 0.5,
+  margin: 2490,
+  leverage: 10,
+  unrealizedPnl: 150,
+  liquidationPrice: 44820,
+  isOpen: true,
+  health: 112,
+};
+
+export default function PositionsPanel({
+  symbol = "BTC",
+  position: livePosition,
+}: {
+  symbol?: string;
+  position?: PositionData;
+}) {
+  // Use live position if provided, otherwise mock
+  const pos = livePosition ?? MOCK_POSITION;
+  const markPrice = "markPrice" in pos ? (pos as any).markPrice : pos.entryPrice;
+
+  if (!pos.isOpen && !livePosition) {
     return (
       <div className="px-4 py-8 text-center text-gray-600 text-sm">
         No open positions
@@ -20,10 +42,10 @@ export default function PositionsPanel({ symbol = "BTC" }: { symbol?: string }) 
     );
   }
 
-  const pnlColor = position.unrealizedPnl >= 0 ? "text-green" : "text-red";
-  const healthPct = Math.min(position.health, 100);
+  const pnlColor = pos.unrealizedPnl >= 0 ? "text-green" : "text-red";
+  const healthPct = Math.min(pos.health, 100);
   const healthColor =
-    position.health > 50 ? "bg-green" : position.health > 20 ? "bg-yellow-500" : "bg-red";
+    pos.health > 50 ? "bg-green" : pos.health > 20 ? "bg-yellow-500" : "bg-red";
 
   return (
     <div className="p-4">
@@ -31,43 +53,43 @@ export default function PositionsPanel({ symbol = "BTC" }: { symbol?: string }) 
       <div className="space-y-2 text-xs">
         <div className="flex justify-between">
           <span className="text-gray-500">Side</span>
-          <span className={position.side === "Long" ? "text-green" : "text-red"}>
-            {position.side}
+          <span className={pos.isLong ? "text-green" : "text-red"}>
+            {pos.isLong ? "Long" : "Short"}
           </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Entry</span>
-          <span className="text-white">${position.entryPrice.toLocaleString()}</span>
+          <span className="text-white">${pos.entryPrice.toLocaleString()}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Mark</span>
-          <span className="text-white">${position.markPrice.toLocaleString()}</span>
+          <span className="text-white">${markPrice.toLocaleString()}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Size</span>
-          <span className="text-white">{position.size} {symbol}</span>
+          <span className="text-white">{pos.size} {symbol}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Leverage</span>
-          <span className="text-cyan">{position.leverage}x</span>
+          <span className="text-cyan">{pos.leverage}x</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Unrealized PnL</span>
           <span className={`font-medium ${pnlColor}`}>
-            ${position.unrealizedPnl > 0 ? "+" : ""}
-            {position.unrealizedPnl.toFixed(2)}
+            ${pos.unrealizedPnl > 0 ? "+" : ""}
+            {pos.unrealizedPnl.toFixed(2)}
           </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Liquidation</span>
-          <span className="text-red">${position.liqPrice.toLocaleString()}</span>
+          <span className="text-red">${pos.liquidationPrice.toLocaleString()}</span>
         </div>
 
         {/* Health bar */}
         <div className="pt-2">
           <div className="flex justify-between mb-1">
             <span className="text-gray-500">Margin Health</span>
-            <span className="text-white">{position.health.toFixed(1)}%</span>
+            <span className="text-white">{pos.health.toFixed(1)}%</span>
           </div>
           <div className="h-1.5 bg-border rounded overflow-hidden">
             <div
