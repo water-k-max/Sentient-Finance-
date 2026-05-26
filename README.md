@@ -156,20 +156,20 @@ cd frontend && npm run dev
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| MockPriceFeed | `TBD` | [View](#) |
-| OracleAdapter | `TBD` | [View](#) |
-| MarginVault | `TBD` | [View](#) |
-| OrderBookFactory | `TBD` | [View](#) |
+| MockPriceFeed | `0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19` | [View](https://explorer.testnet.somnia.network/address/0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19) |
+| OracleAdapter | `0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0` | [View](https://explorer.testnet.somnia.network/address/0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0) |
+| MarginVault | `0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b` | [View](https://explorer.testnet.somnia.network/address/0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b) |
+| OrderBookFactory | `0x62991Cebaf011Ebdc7b6ABA3Eb5cA7e517dEAd15` | [View](https://explorer.testnet.somnia.network/address/0x62991Cebaf011Ebdc7b6ABA3Eb5cA7e517dEAd15) |
 | BTC-USD OrderBook | `TBD` | [View](#) |
 | ETH-USD OrderBook | `TBD` | [View](#) |
 | SOL-USD OrderBook | `TBD` | [View](#) |
-| PerpEngine | `TBD` | [View](#) |
-| LiquidationSentinel | `TBD` | [View](#) |
-| LiquidityProviderAgent | `TBD` | [View](#) |
-| AgentInterface | `TBD` | [View](#) |
-| AgentOracle | `TBD` | [View](#) |
+| PerpEngine | `0xaA6e6c28EceFAAbCDD71b4EBD8bAF20803fF6230` | [View](https://explorer.testnet.somnia.network/address/0xaA6e6c28EceFAAbCDD71b4EBD8bAF20803fF6230) |
+| LiquidationSentinel | `0x002b992AE8E4867310Fb487765F872dFE9e08b61` | [View](https://explorer.testnet.somnia.network/address/0x002b992AE8E4867310Fb487765F872dFE9e08b61) |
+| LiquidityProviderAgent | `0x4A15Ab0CA037C3Da4177b85B74697aC136f73af7` | [View](https://explorer.testnet.somnia.network/address/0x4A15Ab0CA037C3Da4177b85B74697aC136f73af7) |
+| AgentInterface | `0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499` | [View](https://explorer.testnet.somnia.network/address/0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499) |
+| AgentOracle | `0xF026E887A1D91158ce4Ec0775e1ed6350B3C0eDa` | [View](https://explorer.testnet.somnia.network/address/0xF026E887A1D91158ce4Ec0775e1ed6350B3C0eDa) |
 
-*Addresses populated after testnet deployment.*
+Deployed on Somnia testnet 2026-05-26. Explorer links above.
 
 ## The Graph Subgraph
 
