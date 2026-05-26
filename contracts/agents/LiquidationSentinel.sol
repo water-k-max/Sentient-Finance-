@@ -59,18 +59,19 @@ contract LiquidationSentinel {
     event LiquidationExecuted(address indexed trader, uint256 timestamp);
 
     // Internal: iterate and liquidate unhealthy positions
+    // Optimized: snapshot trader list once, iterate memory copy (avoids re-reading count)
     function _liquidateUnhealthyPositions() internal {
-        uint256 count = marginVault.trackedTradersCount();
         uint256 maintRatio = marginVault.MAINTENANCE_MARGIN_RATIO();
 
-        // Iterate in reverse so we can safely skip over liquidated entries
-        // (liquidation removes from the array by swapping with last element)
-        for (uint256 i = count; i > 0; i--) {
-            // Re-read count each iteration since liquidation modifies the array
-            uint256 currentCount = marginVault.trackedTradersCount();
-            if (i > currentCount) continue;
+        // Snapshot all tracked traders into memory (single batch read)
+        address[] memory traders = marginVault.getTrackedTraders();
+        uint256 count = traders.length;
 
-            address trader = marginVault.trackedTraderAt(i - 1);
+        for (uint256 i = 0; i < count; i++) {
+            address trader = traders[i];
+            // Skip if already liquidated (was removed from tracked list)
+            if (!marginVault.isTracked(trader)) continue;
+
             uint256 health = marginVault.marginHealth(trader);
             if (health < maintRatio) {
                 marginVault.liquidate(trader);

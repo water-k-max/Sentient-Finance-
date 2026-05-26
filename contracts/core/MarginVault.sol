@@ -118,6 +118,13 @@ contract MarginVault is IMarginVault {
         emit PnLUpdated(trader, pnl, health);
     }
 
+    /// @notice Batch PnL update for a subset of traders — O(k) instead of O(n)
+    function updatePnLBatch(address[] calldata traders, uint256 currentIndexPrice) external {
+        for (uint256 i = 0; i < traders.length; i++) {
+            _updatePnL(traders[i], currentIndexPrice);
+        }
+    }
+
     /// @notice Update PnL for all tracked positions (called by reactive agent)
     function updateAllPnL(uint256 currentIndexPrice) external {
         for (uint256 i = 0; i < trackedTraders.length; i++) {

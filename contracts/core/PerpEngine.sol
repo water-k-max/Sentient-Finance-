@@ -24,12 +24,16 @@ contract PerpEngine {
     uint256 public constant FUNDING_INTERVAL = 8 hours;
 
     // Price history for mark price computation (per pair)
+    // Circular buffer: O(1) write instead of O(n) array shift
+    // Note: Solidity requires literal for fixed array size in mapping
     struct FillRecord {
         uint256 price;
         uint256 size;
         uint256 timestamp;
     }
-    mapping(bytes32 => FillRecord[]) public recentFills;
+    mapping(bytes32 => FillRecord[50]) public fillBuffer;
+    mapping(bytes32 => uint256) public fillHead;
+    mapping(bytes32 => uint256) public fillCount;
     uint256 public constant FILL_HISTORY_WINDOW = 50;
 
     // Stats
@@ -145,17 +149,21 @@ contract PerpEngine {
         indexPrices[pairId] = price;
     }
 
-    /// @notice Record a fill for mark price computation
+    /// @notice Record a fill for mark price computation — O(1) circular buffer
     function recordFill(bytes32 pairId, uint256 price, uint256 size) external {
-        recentFills[pairId].push(FillRecord(price, size, block.timestamp));
-        totalVolume += size;
+        uint256 count = fillCount[pairId];
+        uint256 head = fillHead[pairId];
 
-        if (recentFills[pairId].length > FILL_HISTORY_WINDOW) {
-            for (uint256 i = 0; i < recentFills[pairId].length - 1; i++) {
-                recentFills[pairId][i] = recentFills[pairId][i + 1];
-            }
-            recentFills[pairId].pop();
+        if (count < FILL_HISTORY_WINDOW) {
+            // Buffer not full yet — append
+            fillBuffer[pairId][count] = FillRecord(price, size, block.timestamp);
+            fillCount[pairId] = count + 1;
+        } else {
+            // Buffer full — overwrite oldest entry (head position)
+            fillBuffer[pairId][head] = FillRecord(price, size, block.timestamp);
+            fillHead[pairId] = (head + 1) % FILL_HISTORY_WINDOW;
         }
+        totalVolume += size;
     }
 
     /// @notice Get all registered pairs
@@ -171,15 +179,18 @@ contract PerpEngine {
     // ============ Internal Functions ============
 
     function _getMarkPrice(bytes32 pairId) internal view returns (uint256) {
-        FillRecord[] memory fills = recentFills[pairId];
-        if (fills.length == 0) return indexPrices[pairId];
+        uint256 count = fillCount[pairId];
+        if (count == 0) return indexPrices[pairId];
 
+        uint256 head = fillHead[pairId];
         uint256 totalPriceWeighted = 0;
         uint256 totalSize = 0;
 
-        for (uint256 i = 0; i < fills.length; i++) {
-            totalPriceWeighted += fills[i].price * fills[i].size;
-            totalSize += fills[i].size;
+        for (uint256 i = 0; i < count; i++) {
+            uint256 idx = (head + i) % FILL_HISTORY_WINDOW;
+            FillRecord memory fill = fillBuffer[pairId][idx];
+            totalPriceWeighted += fill.price * fill.size;
+            totalSize += fill.size;
         }
 
         if (totalSize == 0) return indexPrices[pairId];

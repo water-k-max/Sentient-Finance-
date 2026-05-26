@@ -13,6 +13,9 @@ interface IPerpEngine {
 contract OrderBook is IOrderBook {
     // ============ State ============
 
+    // Cap matches per call to prevent runaway gas consumption
+    uint256 public constant MAX_MATCHES_PER_CALL = 10;
+
     mapping(uint256 => Order) public orders;
     uint256[] public bidHeap;
     uint256[] public askHeap;
@@ -154,9 +157,10 @@ contract OrderBook is IOrderBook {
 
     // ============ Internal Matching Logic ============
 
-    /// @notice Attempt to match crossing orders
+    /// @notice Attempt to match crossing orders — capped at MAX_MATCHES_PER_CALL
     function _attemptMatch() internal {
-        while (bidHeap.length > 0 && askHeap.length > 0) {
+        uint256 matchCount = 0;
+        while (bidHeap.length > 0 && askHeap.length > 0 && matchCount < MAX_MATCHES_PER_CALL) {
             uint256 bidId = bidHeap[0];
             uint256 askId = askHeap[0];
 
@@ -204,6 +208,7 @@ contract OrderBook is IOrderBook {
                 perpEngine.recordFill(pairId, fillPrice, fillSize);
             }
 
+            matchCount++;
             emit OrderMatched(bidId, askId, fillPrice, fillSize);
         }
     }

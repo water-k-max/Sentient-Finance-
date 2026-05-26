@@ -21,6 +21,7 @@ interface IMarginVault {
     function releaseMargin(address trader, uint256 amount) external;
     function settlePosition(address longTrader, address shortTrader, uint256 fillPrice, uint256 fillSize, uint256 longLeverage, uint256 shortLeverage) external;
     function updatePnL(address trader, uint256 currentIndexPrice) external;
+    function updatePnLBatch(address[] calldata traders, uint256 currentIndexPrice) external;
     function updateAllPnL(uint256 currentIndexPrice) external;
     function liquidate(address trader) external;
     function computeLiquidationPrice(bool isLong, uint256 entryPrice, uint256 leverage) external pure returns (uint256);
@@ -30,6 +31,7 @@ interface IMarginVault {
     function getTrackedTraders() external view returns (address[] memory);
     function trackedTradersCount() external view returns (uint256);
     function trackedTraderAt(uint256 index) external view returns (address);
+    function isTracked(address trader) external view returns (bool);
     function setAuthorized(address _addr, bool authorized) external;
     function isAuthorized(address _addr) external view returns (bool);
 
