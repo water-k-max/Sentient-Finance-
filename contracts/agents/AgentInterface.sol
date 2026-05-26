@@ -89,15 +89,25 @@ contract AgentInterface {
     // ============ Internal Triggers ============
 
     function _triggerSentinel(uint256 currentPrice) internal {
-        // In production, Somnia reactive layer calls Sentinel directly
-        // Here we emit an event for the demo
-        emit SentinelTriggered(currentPrice);
+        // Call the Sentinel to check and liquidate unhealthy positions
+        ILiquidationSentinel(liquidationSentinel).checkAllPositions(currentPrice);
     }
 
     function _triggerLPRebalance(uint256 currentPrice) internal {
-        emit LPRebalanceTriggered(currentPrice);
+        // Call the LP Agent to rebalance its orders
+        ILiquidityProviderAgent(liquidityProviderAgent).rebalance(currentPrice);
     }
 
     event SentinelTriggered(uint256 currentPrice);
     event LPRebalanceTriggered(uint256 currentPrice);
+}
+
+/// @title ILiquidationSentinel — Minimal interface for AgentInterface
+interface ILiquidationSentinel {
+    function checkAllPositions(uint256 currentPrice) external;
+}
+
+/// @title ILiquidityProviderAgent — Minimal interface for AgentInterface
+interface ILiquidityProviderAgent {
+    function rebalance(uint256 currentIndexPrice) external;
 }

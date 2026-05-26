@@ -19,12 +19,13 @@ describe("AgentIntegration", function () {
   let oracleAdapter: OracleAdapter;
   let owner: HardhatEthersSigner;
   let trader1: HardhatEthersSigner;
+  let trader2: HardhatEthersSigner;
 
   const PRICE_SCALE = 10n ** 8n;
   const SIZE_SCALE = 10n ** 18n;
 
   beforeEach(async function () {
-    [owner, trader1] = await ethers.getSigners();
+    [owner, trader1, trader2] = await ethers.getSigners();
 
     // Deploy MarginVault
     const MarginVaultFactory = await ethers.getContractFactory("MarginVault");
@@ -113,6 +114,10 @@ describe("AgentIntegration", function () {
     it("should trigger PnL update on simulated price update", async function () {
       const newPrice = 48000n * PRICE_SCALE;
 
+      // Initialize LP Agent first so rebalance doesn't fail
+      await marginVault.connect(owner).deposit(2n * SIZE_SCALE);
+      await lpAgent.initialize(20n, 1n * SIZE_SCALE, 50000n * PRICE_SCALE);
+
       // Should not revert
       await agentInterface.simulatePriceUpdate(newPrice);
     });
@@ -152,6 +157,60 @@ describe("AgentIntegration", function () {
       // New bid should be higher (following price)
       const newBid = await orderBook.bestBid();
       expect(newBid).to.be.gt(oldBid);
+    });
+  });
+
+  describe("full reactive cascade — Sentinel liquidation", function () {
+    it("should liquidate position when price drops below liquidation threshold via simulatePriceUpdate", async function () {
+      const entryPrice = 50000n * PRICE_SCALE;
+      const size = 1n * SIZE_SCALE;
+      const leverage = 10n;
+
+      // Deposit for both traders
+      const notional = (size * entryPrice) / SIZE_SCALE;
+      const marginPerOrder = notional / leverage;
+      await marginVault.connect(trader1).deposit(marginPerOrder * 2n);
+      await marginVault.connect(trader2).deposit(marginPerOrder * 2n);
+
+      // trader1 places ask (short)
+      await orderBook.connect(trader1).placeOrder(false, entryPrice, size, leverage);
+
+      // trader2 places crossing bid (long) → triggers match
+      const tx0 = await orderBook.connect(trader2).placeOrder(true, entryPrice + 1n * PRICE_SCALE, size, leverage);
+      await tx0.wait();
+
+      // Verify matching happened
+      const askOrder = await orderBook.getOrder(0);
+      const bidOrder = await orderBook.getOrder(1);
+
+      // Verify positions were opened (both traders tracked)
+      const trackedCount = await marginVault.trackedTradersCount();
+      expect(trackedCount).to.be.gte(2);
+
+      // Check trader2's long position is healthy
+      const healthBefore = await marginVault.marginHealth(await trader2.getAddress());
+      const maintRatio = await marginVault.MAINTENANCE_MARGIN_RATIO();
+      expect(healthBefore).to.be.gt(maintRatio);
+
+      // Drop price sharply (below liq price ~47500 for 10x long)
+      const crashPrice = 45000n * PRICE_SCALE;
+
+      // Initialize LP Agent so rebalance doesn't fail when triggered
+      await marginVault.connect(owner).deposit(4n * SIZE_SCALE);
+      await lpAgent.initialize(20n, 1n * SIZE_SCALE, entryPrice);
+
+      // Simulate the full reactive cascade
+      const tx = await agentInterface.simulatePriceUpdate(crashPrice);
+      const receipt = await tx.wait();
+
+      // Check for LiquidationExecuted via Sentinel's event query
+      const sentinelEvents = await sentinel.queryFilter(sentinel.filters.LiquidationExecuted());
+      console.log("  Sentinel events:", sentinelEvents.length);
+      expect(sentinelEvents.length).to.be.gt(0);
+
+      // Trader2's long position should now be closed
+      const position = await marginVault.getPosition(await trader2.getAddress());
+      expect(position.isOpen).to.be.false;
     });
   });
 });

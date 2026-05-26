@@ -27,6 +27,9 @@ interface IMarginVault {
     function marginHealth(address trader) external view returns (uint256);
     function getPosition(address trader) external view returns (Position memory);
     function getCollateralBalance(address trader) external view returns (uint256);
+    function getTrackedTraders() external view returns (address[] memory);
+    function trackedTradersCount() external view returns (uint256);
+    function trackedTraderAt(uint256 index) external view returns (address);
     function setAuthorized(address _addr, bool authorized) external;
     function isAuthorized(address _addr) external view returns (bool);
 

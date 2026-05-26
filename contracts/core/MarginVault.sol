@@ -162,6 +162,19 @@ contract MarginVault is IMarginVault {
         return collateralBalances[trader];
     }
 
+    function getTrackedTraders() external view returns (address[] memory) {
+        return trackedTraders;
+    }
+
+    function trackedTradersCount() external view returns (uint256) {
+        return trackedTraders.length;
+    }
+
+    function trackedTraderAt(uint256 index) external view returns (address) {
+        require(index < trackedTraders.length, "MarginVault: index out of bounds");
+        return trackedTraders[index];
+    }
+
     // ============ Internal Functions ============
 
     /// @notice Compute the liquidation price for a position
@@ -201,6 +214,9 @@ contract MarginVault is IMarginVault {
         uint256 leverage
     ) internal {
         Position storage pos = positions[trader];
+        // Compute margin from the notional: (size * entryPrice / 1e18) / leverage
+        uint256 notional = (size * entryPrice) / 1e18;
+        pos.margin = notional / leverage;
         pos.trader = trader;
         pos.isLong = isLong;
         pos.entryPrice = entryPrice;

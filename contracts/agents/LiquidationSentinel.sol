@@ -59,12 +59,23 @@ contract LiquidationSentinel {
     event LiquidationExecuted(address indexed trader, uint256 timestamp);
 
     // Internal: iterate and liquidate unhealthy positions
-    // For hackathon: this is a simplified version that relies on the vault's tracking
     function _liquidateUnhealthyPositions() internal {
-        // In a full implementation, MarginVault would expose trackedTraders
-        // For now, this function is called by checkAllPositions after updateAllPnL
-        // The actual liquidation happens in MarginVault.liquidate() which is
-        // authorized to be called only by this Sentinel.
-        // The Sentinel's checkAllPositions triggers the cascade.
+        uint256 count = marginVault.trackedTradersCount();
+        uint256 maintRatio = marginVault.MAINTENANCE_MARGIN_RATIO();
+
+        // Iterate in reverse so we can safely skip over liquidated entries
+        // (liquidation removes from the array by swapping with last element)
+        for (uint256 i = count; i > 0; i--) {
+            // Re-read count each iteration since liquidation modifies the array
+            uint256 currentCount = marginVault.trackedTradersCount();
+            if (i > currentCount) continue;
+
+            address trader = marginVault.trackedTraderAt(i - 1);
+            uint256 health = marginVault.marginHealth(trader);
+            if (health < maintRatio) {
+                marginVault.liquidate(trader);
+                emit LiquidationExecuted(trader, block.timestamp);
+            }
+        }
     }
 }

@@ -76,6 +76,21 @@ async function main() {
   await agentInterface.waitForDeployment();
   console.log(`✅ AgentInterface: ${await agentInterface.getAddress()}`);
 
+  // 12. Deploy AgentOracle (Somnia JSON API Agent for live CoinGecko prices)
+  // Use the Somnia testnet platform address if available, otherwise skip
+  const SOMNIA_AGENTS_PLATFORM = process.env.SOMNIA_AGENTS_PLATFORM_ADDRESS;
+  let agentOracle: any = null;
+  if (SOMNIA_AGENTS_PLATFORM) {
+    const AgentOracle = await ethers.getContractFactory("AgentOracle");
+    agentOracle = await AgentOracle.deploy(SOMNIA_AGENTS_PLATFORM, assetId);
+    await agentOracle.waitForDeployment();
+    console.log(`✅ AgentOracle: ${await agentOracle.getAddress()}`);
+    console.log("  → Configured with Somnia JSON API Agent for live CoinGecko BTC/USD");
+  } else {
+    console.log("⏭️  AgentOracle: Skipping (set SOMNIA_AGENTS_PLATFORM_ADDRESS in .env)");
+    console.log("   → OracleAdapter (mock) will be used for price updates");
+  }
+
   // 9. Wire permissions
   console.log("\n🔌 Wiring permissions...");
   await marginVault.setAuthorized(await orderBook.getAddress(), true);
@@ -91,7 +106,13 @@ async function main() {
   await agentInterface.subscribe(await orderBook.getAddress(), ORDER_PLACED_TOPIC);
   console.log("  → Subscribed to OrderPlaced events");
   await agentInterface.subscribe(await oracleAdapter.getAddress(), PRICE_UPDATED_TOPIC);
-  console.log("  → Subscribed to PriceUpdated events");
+  console.log("  → Subscribed to PriceUpdated events (OracleAdapter)");
+
+  // Subscribe AgentOracle if deployed
+  if (agentOracle) {
+    await agentInterface.subscribe(await agentOracle.getAddress(), PRICE_UPDATED_TOPIC);
+    console.log("  → Subscribed to PriceUpdated events (AgentOracle)");
+  }
 
   // 11. Fund LP Agent and initialize
   console.log("\n💰 Funding LP Agent...");
@@ -118,6 +139,9 @@ async function main() {
   console.log(`LiquidationSentinel:  ${await sentinel.getAddress()}`);
   console.log(`LiquidityProviderAgent: ${await lpAgent.getAddress()}`);
   console.log(`AgentInterface:       ${await agentInterface.getAddress()}`);
+  if (agentOracle) {
+    console.log(`AgentOracle:          ${await agentOracle.getAddress()}`);
+  }
   console.log("=".repeat(60));
 }
 
