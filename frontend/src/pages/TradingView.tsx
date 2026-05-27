@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { ethers } from "ethers";
 import OrderBook from "../components/OrderBook";
 import TradeForm from "../components/TradeForm";
 import PositionsPanel from "../components/PositionsPanel";
@@ -9,6 +10,7 @@ import { useOrderBook } from "../hooks/useOrderBook";
 import { usePosition } from "../hooks/usePosition";
 import { useEventFeed } from "../hooks/useEventFeed";
 import { isDeployed } from "../config/addresses";
+import { getPerpEngineWithSigner, pairToBytes32 } from "../lib/contracts";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
 
@@ -24,10 +26,13 @@ export default function TradingView() {
 
   // Live hooks (fall back to mock when not deployed)
   const liveOrderBook = useOrderBook(pair);
-  const { address } = useWallet();
+  const { address, signer, connected } = useWallet();
   const livePosition = usePosition(address);
   const liveEvents = useEventFeed();
-  const isLive = isDeployed();
+  const isLive = isDeployed() && connected;
+
+  // Transaction status
+  const [txStatus, setTxStatus] = useState<string | null>(null);
 
   // Mock data for pre-deployment
   const [mockBids, setMockBids] = useState<Array<{ price: number; size: number }>>([]);
@@ -102,12 +107,45 @@ export default function TradingView() {
     ? liveEvents.map((e) => e.message)
     : mockEvents;
 
-  const handleTrade = (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
-    if (!isLive) {
+  const handleTrade = async (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
+    if (!isLive || !signer) {
       const event = `${type === "buy" ? "Buy" : "Sell"} order placed: ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x`;
       setMockEvents((prev) => [event, ...prev]);
+      return;
     }
-    // When live: call PerpEngine.openPosition(pair, ...) via signer
+
+    // Live transaction
+    try {
+      setTxStatus("pending");
+      const perpEngine = getPerpEngineWithSigner(signer);
+      const pairId = pairToBytes32(pair);
+      const isLong = type === "buy";
+      const sizeWei = ethers.parseUnits(size.toString(), 18);
+      const limitPriceWei = price ? BigInt(Math.floor(price * 1e8)) : 0n;
+
+      const tx = await perpEngine.openPosition(
+        pairId,
+        isLong,
+        sizeWei,
+        leverage,
+        limitPriceWei
+      );
+
+      setTxStatus("confirming");
+      await tx.wait();
+
+      setTxStatus("confirmed");
+      setTimeout(() => setTxStatus(null), 3000);
+
+      const event = `${type === "buy" ? "Buy" : "Sell"} ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x — ✅ Confirmed`;
+      setMockEvents((prev) => [event, ...prev]);
+    } catch (e: any) {
+      console.error("Trade failed:", e);
+      setTxStatus("failed");
+      setTimeout(() => setTxStatus(null), 5000);
+      const event = `❌ Trade failed: ${e?.reason || e?.message || "unknown error"}`;
+      setMockEvents((prev) => [event, ...prev]);
+    }
   };
 
   return (
@@ -139,7 +177,7 @@ export default function TradingView() {
           <PriceChart data={priceHistory} pair={pair} />
         </div>
         <div className="p-4">
-          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} />
+          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} txStatus={txStatus} />
         </div>
       </div>
 

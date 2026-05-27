@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "../config/addresses";
+import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
 // Minimal OrderBook ABI (only what we need)
 const ORDERBOOK_ABI = [
@@ -20,6 +20,7 @@ interface OrderBookState {
   bestBid: number;
   bestAsk: number;
   loading: boolean;
+  error: string | null;
 }
 
 const PRICE_SCALE = 1e8;
@@ -32,23 +33,25 @@ export function useOrderBook(pair: string, pollInterval = 2000): OrderBookState 
     bestBid: 0,
     bestAsk: 0,
     loading: true,
+    error: null,
   });
 
   useEffect(() => {
     const orderBookAddr = CONTRACT_ADDRESSES.orderBooks[pair as keyof typeof CONTRACT_ADDRESSES.orderBooks];
     if (!orderBookAddr || orderBookAddr === ethers.ZeroAddress) {
-      setState((prev) => ({ ...prev, loading: false }));
+      setState((prev) => ({ ...prev, loading: false, error: null }));
       return;
     }
 
     let cancelled = false;
-    const provider = new ethers.JsonRpcProvider(
-      process.env.REACT_APP_SOMNIA_RPC_URL || "https://dream-rpc.somnia.network"
-    );
-    const orderBook = new ethers.Contract(orderBookAddr, ORDERBOOK_ABI, provider);
+    let provider: ethers.JsonRpcProvider | null = null;
 
     const fetchDepth = async () => {
       try {
+        if (!provider) {
+          provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
+        }
+        const orderBook = new ethers.Contract(orderBookAddr, ORDERBOOK_ABI, provider);
         const [bidPrices, bidSizes, askPrices, askSizes] = await orderBook.getOrderBookDepth(20);
         const bestBidRaw = await orderBook.bestBid();
         const bestAskRaw = await orderBook.bestAsk();
@@ -71,11 +74,16 @@ export function useOrderBook(pair: string, pollInterval = 2000): OrderBookState 
           bestBid: Number(bestBidRaw) / PRICE_SCALE,
           bestAsk: Number(bestAskRaw) / PRICE_SCALE,
           loading: false,
+          error: null,
         });
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to fetch order book:", e);
         if (!cancelled) {
-          setState((prev) => ({ ...prev, loading: false }));
+          setState((prev) => ({
+            ...prev,
+            loading: false,
+            error: e?.message || "Failed to fetch order book",
+          }));
         }
       }
     };

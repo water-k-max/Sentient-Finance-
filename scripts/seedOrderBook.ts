@@ -1,69 +1,85 @@
 import { ethers } from "hardhat";
 
 /**
- * Seed the order book with initial depth for the demo.
- * Places 10 staggered limit buy orders and 10 staggered limit sell orders
- * around the mock oracle's initial price with 0.1% increments.
+ * Seed all three order books with initial depth for the demo.
+ * Places 10 staggered limit buy and 10 staggered limit sell orders
+ * around each pair's mid price with 0.1% increments.
+ *
+ * Usage: npx hardhat run scripts/seedOrderBook.ts --network somnia
  */
 async function main() {
-  if (process.argv.length < 4) {
-    console.log("Usage: npx hardhat run scripts/seedOrderBook.ts --network <network> -- <orderBookAddr> <marginVaultAddr>");
-    process.exit(1);
-  }
+  // Deployed addresses (from aad03e8)
+  const ORDER_BOOKS: Record<string, string> = {
+    "BTC-USD": "0xA830E52C62F7694Ed859d9D6414cc203FC20B481",
+    "ETH-USD": "0x64E1235dFd0AC1887B5FB852309f959817ac45B2",
+    "SOL-USD": "0x1873B69a805Bd771cB74bF7a38997c730dcF3158",
+  };
+  const MARGIN_VAULT = "0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b";
 
-  const orderBookAddr = process.argv[2];
-  const marginVaultAddr = process.argv[3];
+  const pairConfigs: Record<string, { midPrice: number; step: number }> = {
+    "BTC-USD": { midPrice: 50000, step: 50 },
+    "ETH-USD": { midPrice: 3000, step: 3 },
+    "SOL-USD": { midPrice: 150, step: 0.15 },
+  };
 
   const [deployer] = await ethers.getSigners();
-  console.log(`Seeding order book from: ${deployer.address}\n`);
-
-  const OrderBook = await ethers.getContractFactory("OrderBook");
-  const orderBook = OrderBook.attach(orderBookAddr);
+  console.log(`Seeding from: ${deployer.address}\n`);
 
   const MarginVault = await ethers.getContractFactory("MarginVault");
-  const marginVault = MarginVault.attach(marginVaultAddr);
+  const marginVault = MarginVault.attach(MARGIN_VAULT);
+
+  const OrderBook = await ethers.getContractFactory("OrderBook");
 
   const PRICE_SCALE = 10n ** 8n;
   const SIZE_SCALE = 10n ** 18n;
-  const midPrice = 50000n * PRICE_SCALE; // $50,000
   const size = 1n * SIZE_SCALE;
   const leverage = 10n;
 
-  console.log(`Mid price: $50,000 | Size: 1 BTC | Leverage: 10x\n`);
+  // Seed each pair
+  for (const [pairName, obAddr] of Object.entries(ORDER_BOOKS)) {
+    const config = pairConfigs[pairName];
+    const midPrice = BigInt(Math.floor(config.midPrice)) * PRICE_SCALE;
+    const step = BigInt(Math.floor(config.step * 1e8));
 
-  // Calculate total margin needed
-  const notional = (size * midPrice) / SIZE_SCALE;
-  const marginPerOrder = notional / leverage;
-  const totalMargin = marginPerOrder * 20n; // 10 bids + 10 asks
+    console.log(`\n📊 Seeding ${pairName}...`);
+    const orderBook = OrderBook.attach(obAddr);
 
-  console.log(`Depositing ${totalMargin / SIZE_SCALE} USDC collateral...`);
-  await marginVault.connect(deployer).deposit(totalMargin);
-  console.log("✅ Collateral deposited\n");
+    // Calculate margin and deposit
+    const notional = (size * midPrice) / SIZE_SCALE;
+    const marginPerOrder = notional / leverage;
+    const totalMargin = marginPerOrder * 20n;
 
-  // Place 10 bid orders (below mid price, descending)
-  console.log("Placing 10 bid orders...");
-  for (let i = 1; i <= 10; i++) {
-    const priceOffset = (midPrice * BigInt(i) * 10n) / 10000n; // 0.1% increments
-    const bidPrice = midPrice - priceOffset;
+    console.log(`  Mid: $${config.midPrice} | Deposit: ${totalMargin / SIZE_SCALE} USDC`);
+    await marginVault.connect(deployer).deposit(totalMargin);
 
-    const tx = await orderBook.connect(deployer).placeOrder(true, bidPrice, size, leverage);
-    await tx.wait();
-    console.log(`  Bid #${i}: $${Number(bidPrice / PRICE_SCALE).toLocaleString()}`);
+    // Place 10 bids (descending from mid price)
+    for (let i = 1; i <= 10; i++) {
+      const priceOffset = (midPrice * BigInt(i) * 10n) / 10000n;
+      const bidPrice = midPrice - priceOffset;
+
+      const tx = await orderBook.connect(deployer).placeOrder(true, bidPrice, size, leverage);
+      await tx.wait();
+      const priceUsd = Number(bidPrice) / 1e8;
+      console.log(`    Bid #${i}: $${priceUsd.toLocaleString()}`);
+    }
+
+    // Place 10 asks (ascending from mid price)
+    for (let i = 1; i <= 10; i++) {
+      const priceOffset = (midPrice * BigInt(i) * 10n) / 10000n;
+      const askPrice = midPrice + priceOffset;
+
+      const tx = await orderBook.connect(deployer).placeOrder(false, askPrice, size, leverage);
+      await tx.wait();
+      const priceUsd = Number(askPrice) / 1e8;
+      console.log(`    Ask #${i}: $${priceUsd.toLocaleString()}`);
+    }
+
+    const bestBid = Number(await orderBook.bestBid()) / 1e8;
+    const bestAsk = Number(await orderBook.bestAsk()) / 1e8;
+    console.log(`  ✅ ${pairName} seeded — Best bid: $${bestBid.toLocaleString()} | Best ask: $${bestAsk.toLocaleString()}`);
   }
 
-  console.log("\nPlacing 10 ask orders...");
-  for (let i = 1; i <= 10; i++) {
-    const priceOffset = (midPrice * BigInt(i) * 10n) / 10000n;
-    const askPrice = midPrice + priceOffset;
-
-    const tx = await orderBook.connect(deployer).placeOrder(false, askPrice, size, leverage);
-    await tx.wait();
-    console.log(`  Ask #${i}: $${Number(askPrice / PRICE_SCALE).toLocaleString()}`);
-  }
-
-  console.log("\n✅ Order book seeded!");
-  console.log(`Best bid: $${Number(await orderBook.bestBid() / PRICE_SCALE).toLocaleString()}`);
-  console.log(`Best ask: $${Number(await orderBook.bestAsk() / PRICE_SCALE).toLocaleString()}`);
+  console.log("\n✅ All order books seeded!");
 }
 
 main()

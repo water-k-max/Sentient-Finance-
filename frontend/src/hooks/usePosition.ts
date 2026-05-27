@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "../config/addresses";
+import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
 const VAULT_ABI = [
   "function getPosition(address trader) view returns (tuple(address trader, bool isLong, uint256 entryPrice, uint256 size, uint256 margin, uint256 leverage, int256 unrealizedPnl, uint256 liquidationPrice, bool isOpen) position)",
@@ -37,13 +37,14 @@ export function usePosition(
     if (!vaultAddr || vaultAddr === ethers.ZeroAddress) return;
 
     let cancelled = false;
-    const provider = new ethers.JsonRpcProvider(
-      process.env.REACT_APP_SOMNIA_RPC_URL || "https://dream-rpc.somnia.network"
-    );
-    const vault = new ethers.Contract(vaultAddr, VAULT_ABI, provider);
+    let provider: ethers.JsonRpcProvider | null = null;
 
     const fetchPosition = async () => {
       try {
+        if (!provider) {
+          provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
+        }
+        const vault = new ethers.Contract(vaultAddr, VAULT_ABI, provider);
         const [pos, healthRaw] = await Promise.all([
           vault.getPosition(address),
           vault.marginHealth(address),
@@ -60,12 +61,12 @@ export function usePosition(
           isLong: pos.isLong,
           entryPrice: Number(pos.entryPrice) / PRICE_SCALE,
           size: Number(pos.size) / 1e18,
-          margin: Number(pos.margin) / 1e6, // USDC 6 decimals
+          margin: Number(pos.margin) / 1e6,
           leverage: Number(pos.leverage),
           unrealizedPnl: Number(pos.unrealizedPnl) / 1e6,
           liquidationPrice: Number(pos.liquidationPrice) / PRICE_SCALE,
           isOpen: pos.isOpen,
-          health: Number(healthRaw) / 1e16, // percentage (5e16 = 5%)
+          health: Number(healthRaw) / 1e16,
         });
       } catch (e) {
         console.error("Failed to fetch position:", e);

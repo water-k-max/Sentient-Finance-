@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESSES } from "../config/addresses";
+import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
 interface FeedEvent {
   timestamp: Date;
@@ -9,12 +9,12 @@ interface FeedEvent {
 }
 
 const ORDERBOOK_ABI = [
-  "event OrderPlaced(uint256 orderId, address trader, bool isBid, uint256 price, uint256 size)",
-  "event OrderMatched(uint256 bidOrderId, uint256 askOrderId, uint256 fillPrice, uint256 fillSize)",
+  "event OrderPlaced(uint256 indexed orderId, address indexed trader, bool isBid, uint256 price, uint256 size)",
+  "event OrderMatched(uint256 indexed bidOrderId, uint256 indexed askOrderId, uint256 fillPrice, uint256 fillSize)",
 ];
 
 const VAULT_ABI = [
-  "event LiquidationExecuted(address trader, uint256 liquidationPrice, uint256 remainingMargin)",
+  "event LiquidationExecuted(address indexed trader, uint256 liquidationPrice, uint256 remainingMargin)",
 ];
 
 const LP_AGENT_ABI = [
@@ -24,8 +24,16 @@ const LP_AGENT_ABI = [
 const PRICE_SCALE = 1e8;
 const SIZE_SCALE = 1e18;
 
+const DEMO_EVENTS: FeedEvent[] = [
+  { timestamp: new Date(), message: "LP Agent placed bid at $49,950 | 1.0000 BTC", type: "order" },
+  { timestamp: new Date(), message: "LP Agent placed ask at $50,050 | 1.0000 BTC", type: "order" },
+  { timestamp: new Date(), message: "Order matched: 0.5000 BTC @ $50,000", type: "match" },
+  { timestamp: new Date(), message: "Sentinel monitoring 3 open positions", type: "liquidation" },
+];
+
 export function useEventFeed(maxEvents = 50): FeedEvent[] {
-  const [events, setEvents] = useState<FeedEvent[]>([]);
+  const [events, setEvents] = useState<FeedEvent[]>(DEMO_EVENTS);
+  const lastBlockRef = useRef<number>(0);
 
   useEffect(() => {
     const orderBookAddr = CONTRACT_ADDRESSES.orderBooks["BTC-USD"];
@@ -36,64 +44,98 @@ export function useEventFeed(maxEvents = 50): FeedEvent[] {
       !orderBookAddr || orderBookAddr === ethers.ZeroAddress ||
       !vaultAddr || vaultAddr === ethers.ZeroAddress
     ) {
-      // Fallback to demo events when not deployed
-      setEvents([
-        { timestamp: new Date(), message: "Connect wallet and deploy contracts to see live events", type: "order" },
-        { timestamp: new Date(), message: "LP Agent placed bid at $49,950 | 1.0000 BTC", type: "order" },
-        { timestamp: new Date(), message: "Order matched: 0.5000 BTC @ $50,000", type: "match" },
-        { timestamp: new Date(), message: "Sentinel monitoring 3 open positions", type: "liquidation" },
-      ]);
       return;
     }
 
-    const provider = new ethers.JsonRpcProvider(
-      process.env.REACT_APP_SOMNIA_RPC_URL || "https://dream-rpc.somnia.network"
-    );
-
+    let cancelled = false;
+    const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
     const orderBook = new ethers.Contract(orderBookAddr, ORDERBOOK_ABI, provider);
     const vault = new ethers.Contract(vaultAddr, VAULT_ABI, provider);
     const lpAgent = new ethers.Contract(lpAddr, LP_AGENT_ABI, provider);
 
-    const addEvent = (message: string, type: FeedEvent["type"]) => {
-      setEvents((prev) => {
-        const next = [{ timestamp: new Date(), message, type }, ...prev];
-        return next.slice(0, maxEvents);
-      });
+    const fetchEvents = async () => {
+      try {
+        const currentBlock = await provider.getBlockNumber();
+        if (cancelled) return;
+
+        const fromBlock = lastBlockRef.current > 0
+          ? lastBlockRef.current
+          : Math.max(0, currentBlock - 100);
+        const toBlock = currentBlock;
+
+        if (fromBlock >= toBlock) return;
+
+        const [matched, placed, liquidations, rebalanced] = await Promise.allSettled([
+          orderBook.queryFilter("OrderMatched", fromBlock, toBlock),
+          orderBook.queryFilter("OrderPlaced", fromBlock, toBlock),
+          vault.queryFilter("LiquidationExecuted", fromBlock, toBlock),
+          lpAgent.queryFilter("Rebalanced", fromBlock, toBlock),
+        ]);
+
+        if (cancelled) return;
+
+        const newEvents: FeedEvent[] = [];
+
+        if (matched.status === "fulfilled") {
+          for (const e of matched.value) {
+            const args = (e as any).args;
+            newEvents.push({
+              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
+              message: `Order matched: ${(Number(args.fillSize) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(args.fillPrice) / PRICE_SCALE).toLocaleString()}`,
+              type: "match",
+            });
+          }
+        }
+
+        if (placed.status === "fulfilled") {
+          for (const e of placed.value) {
+            const args = (e as any).args;
+            newEvents.push({
+              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
+              message: `${args.isBid ? "Buy" : "Sell"} order placed: ${(Number(args.size) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(args.price) / PRICE_SCALE).toLocaleString()}`,
+              type: "order",
+            });
+          }
+        }
+
+        if (liquidations.status === "fulfilled") {
+          for (const e of liquidations.value) {
+            const args = (e as any).args;
+            newEvents.push({
+              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
+              message: `Sentinel liquidated ${args.trader.slice(0, 6)}...${args.trader.slice(-4)} at $${(Number(args.liquidationPrice) / PRICE_SCALE).toLocaleString()}`,
+              type: "liquidation",
+            });
+          }
+        }
+
+        if (rebalanced.status === "fulfilled") {
+          for (const e of rebalanced.value) {
+            const args = (e as any).args;
+            newEvents.push({
+              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
+              message: `LP Agent rebalanced spread to ${(Number(args.spreadBps) / 100).toFixed(2)}% at $${(Number(args.midPrice) / PRICE_SCALE).toLocaleString()}`,
+              type: "rebalance",
+            });
+          }
+        }
+
+        if (newEvents.length > 0) {
+          setEvents((prev) => [...newEvents, ...prev].slice(0, maxEvents));
+        }
+
+        lastBlockRef.current = toBlock;
+      } catch (e) {
+        console.error("Failed to fetch events:", e);
+      }
     };
 
-    // Subscribe to events
-    orderBook.on("OrderMatched", (_bidId: bigint, _askId: bigint, fillPrice: bigint, fillSize: bigint) => {
-      addEvent(
-        `Order matched: ${(Number(fillSize) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(fillPrice) / PRICE_SCALE).toLocaleString()}`,
-        "match"
-      );
-    });
-
-    orderBook.on("OrderPlaced", (_orderId: bigint, _trader: string, isBid: boolean, price: bigint, size: bigint) => {
-      addEvent(
-        `${isBid ? "Buy" : "Sell"} order placed: ${(Number(size) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(price) / PRICE_SCALE).toLocaleString()}`,
-        "order"
-      );
-    });
-
-    vault.on("LiquidationExecuted", (trader: string, liqPrice: bigint, _remaining: bigint) => {
-      addEvent(
-        `Sentinel liquidated ${trader.slice(0, 6)}...${trader.slice(-4)} at $${(Number(liqPrice) / PRICE_SCALE).toLocaleString()}`,
-        "liquidation"
-      );
-    });
-
-    lpAgent.on("Rebalanced", (midPrice: bigint, spreadBps: bigint) => {
-      addEvent(
-        `LP Agent rebalanced spread to ${(Number(spreadBps) / 100).toFixed(2)}% at $${(Number(midPrice) / PRICE_SCALE).toLocaleString()}`,
-        "rebalance"
-      );
-    });
+    fetchEvents();
+    const interval = setInterval(fetchEvents, 5000);
 
     return () => {
-      orderBook.removeAllListeners();
-      vault.removeAllListeners();
-      lpAgent.removeAllListeners();
+      cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 

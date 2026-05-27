@@ -3,11 +3,13 @@ import { useState } from "react";
 export default function TradeForm({
   onTrade,
   symbol = "BTC",
-  isLive: _isLive = false,
+  isLive = false,
+  txStatus = null,
 }: {
   onTrade: (type: "buy" | "sell", size: number, leverage: number, price?: number) => void;
   symbol?: string;
   isLive?: boolean;
+  txStatus?: string | null;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [size, setSize] = useState("0.1");
@@ -22,14 +24,24 @@ export default function TradeForm({
       ? 50000 * (1 - 1 / leverage + 0.05)
       : 50000 * (1 + 1 / leverage - 0.05);
 
+  const isSubmitting = txStatus === "pending" || txStatus === "confirming";
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     onTrade(
       side,
       parseFloat(size),
       leverage,
       orderType === "limit" ? parseFloat(price) : undefined
     );
+  };
+
+  const statusConfig = {
+    pending: { text: "Sign in wallet...", color: "text-yellow-400" },
+    confirming: { text: "Confirming on-chain...", color: "text-cyan" },
+    confirmed: { text: "✅ Trade confirmed!", color: "text-green" },
+    failed: { text: "❌ Transaction failed", color: "text-red" },
   };
 
   return (
@@ -39,22 +51,24 @@ export default function TradeForm({
         <button
           type="button"
           onClick={() => setSide("buy")}
+          disabled={isSubmitting}
           className={`flex-1 py-2 rounded text-sm font-medium transition-colors ${
             side === "buy"
               ? "bg-green/15 text-green border border-green/30"
               : "bg-surface text-gray-500 border border-border"
-          }`}
+          } ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           Buy / Long
         </button>
         <button
           type="button"
           onClick={() => setSide("sell")}
+          disabled={isSubmitting}
           className={`flex-1 py-2 rounded text-sm font-medium transition-colors ${
             side === "sell"
               ? "bg-red/15 text-red border border-red/30"
               : "bg-surface text-gray-500 border border-border"
-          }`}
+          } ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           Sell / Short
         </button>
@@ -68,6 +82,7 @@ export default function TradeForm({
             checked={orderType === "market"}
             onChange={() => setOrderType("market")}
             className="accent-cyan"
+            disabled={isSubmitting}
           />
           <span className="text-gray-400">Market</span>
         </label>
@@ -77,6 +92,7 @@ export default function TradeForm({
             checked={orderType === "limit"}
             onChange={() => setOrderType("limit")}
             className="accent-cyan"
+            disabled={isSubmitting}
           />
           <span className="text-gray-400">Limit</span>
         </label>
@@ -92,19 +108,21 @@ export default function TradeForm({
             onChange={(e) => setPrice(e.target.value)}
             className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-white focus:border-cyan outline-none"
             placeholder="50000"
+            disabled={isSubmitting}
           />
         </div>
       )}
 
       {/* Size */}
       <div>
-        <label className="text-xs text-gray-500 mb-1 block">Size (BTC)</label>
+        <label className="text-xs text-gray-500 mb-1 block">Size ({symbol})</label>
         <input
           type="number"
           step="0.0001"
           value={size}
           onChange={(e) => setSize(e.target.value)}
           className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-white focus:border-cyan outline-none"
+          disabled={isSubmitting}
         />
       </div>
 
@@ -121,6 +139,7 @@ export default function TradeForm({
           value={leverage}
           onChange={(e) => setLeverage(parseInt(e.target.value))}
           className="w-full accent-cyan"
+          disabled={isSubmitting}
         />
         <div className="flex justify-between text-xs text-gray-600">
           <span>1x</span>
@@ -138,18 +157,42 @@ export default function TradeForm({
           <span className="text-gray-500">Est. Liquidation</span>
           <span className="text-red">${estimatedLiqPrice.toFixed(2)}</span>
         </div>
+        {isLive && (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Network</span>
+            <span className="text-cyan">Somnia Testnet</span>
+          </div>
+        )}
       </div>
+
+      {/* Transaction status */}
+      {txStatus && statusConfig[txStatus as keyof typeof statusConfig] && (
+        <div
+          className={`text-xs text-center py-2 rounded border ${
+            txStatus === "failed"
+              ? "bg-red/10 border-red/30 text-red"
+              : txStatus === "confirmed"
+              ? "bg-green/10 border-green/30 text-green"
+              : "bg-cyan-dim border-cyan/30 text-cyan"
+          }`}
+        >
+          {statusConfig[txStatus as keyof typeof statusConfig].text}
+        </div>
+      )}
 
       {/* Submit */}
       <button
         type="submit"
+        disabled={isSubmitting}
         className={`w-full py-3 rounded text-sm font-medium transition-colors ${
           side === "buy"
             ? "bg-green/15 text-green border border-green/30 hover:bg-green/25"
             : "bg-red/15 text-red border border-red/30 hover:bg-red/25"
-        }`}
+        } ${isSubmitting ? "opacity-50 cursor-not-allowed animate-pulse" : ""}`}
       >
-        {side === "buy" ? "Buy / Long" : "Sell / Short"} {size} {symbol} @ {leverage}x
+        {isSubmitting
+          ? "Processing..."
+          : `${side === "buy" ? "Buy / Long" : "Sell / Short"} ${size} ${symbol} @ ${leverage}x`}
       </button>
     </form>
   );
