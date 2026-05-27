@@ -11,6 +11,7 @@ import { usePosition } from "../hooks/usePosition";
 import { useEventFeed } from "../hooks/useEventFeed";
 import { isDeployed } from "../config/addresses";
 import { getPerpEngineWithSigner, pairToBytes32 } from "../lib/contracts";
+import { useOraclePrice } from "../hooks/useOraclePrice";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
 
@@ -30,6 +31,7 @@ export default function TradingView() {
   const livePosition = usePosition(address);
   const liveEvents = useEventFeed();
   const isLive = isDeployed() && connected;
+  const oraclePrice = useOraclePrice(pair);
 
   // Transaction status
   const [txStatus, setTxStatus] = useState<string | null>(null);
@@ -39,6 +41,16 @@ export default function TradingView() {
   const [mockAsks, setMockAsks] = useState<Array<{ price: number; size: number }>>([]);
   const [mockEvents, setMockEvents] = useState<string[]>([]);
   const [priceHistory, setPriceHistory] = useState<number[]>([]);
+
+  // Use oracle price for chart, fallback to mock
+  useEffect(() => {
+    if (oraclePrice) {
+      setPriceHistory((prev) => {
+        const next = [...prev, oraclePrice];
+        return next.slice(-50);
+      });
+    }
+  }, [oraclePrice]);
 
   // Reinitialize mock data when pair changes (only used when not deployed)
   useEffect(() => {
@@ -73,7 +85,7 @@ export default function TradingView() {
     if (isLive) return; // Skip mock updates when live
 
     const interval = setInterval(() => {
-      const { step } = config;
+      const { step: _step } = config;
       setMockBids((prev) =>
         prev.map((b) => ({
           ...b,
@@ -86,12 +98,6 @@ export default function TradingView() {
           size: parseFloat(Math.max(0.05, a.size + (Math.random() - 0.5) * 0.3).toFixed(4)),
         }))
       );
-
-      setPriceHistory((prev) => {
-        const last = prev[prev.length - 1];
-        const next = last + (Math.random() - 0.5) * step * 2;
-        return [...prev.slice(1), next];
-      });
     }, 3000);
     return () => clearInterval(interval);
   }, [pair, config, isLive]);
