@@ -17,6 +17,7 @@ contract AgentOracle {
     // JSON API Request agent ID (same on mainnet and testnet)
     uint256 public constant JSON_API_AGENT_ID = 13174292974160097713;
     uint256 public constant SUBCOMMITTEE_SIZE = 3;
+    uint256 public constant THRESHOLD = 2; // 2 of 3 — faster, tolerates 1 failure
     uint256 public constant PRICE_PER_AGENT = 0.03 ether;
 
     // CoinGecko API config
@@ -45,6 +46,7 @@ contract AgentOracle {
     }
 
     /// @notice Request a fresh price from CoinGecko via Somnia's JSON API Agent
+    /// Uses Threshold consensus (2 of 3 validators) for faster finalization
     /// Caller must send enough ETH to cover: operations reserve + pricePerAgent × subcommitteeSize
     function requestPrice() external payable returns (uint256 requestId) {
         bytes memory payload = abi.encodeWithSelector(
@@ -54,14 +56,19 @@ contract AgentOracle {
             COINGECKO_DECIMALS
         );
 
-        uint256 deposit = platform.getRequestDeposit() + PRICE_PER_AGENT * SUBCOMMITTEE_SIZE;
+        uint256 deposit = platform.getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE)
+                        + PRICE_PER_AGENT * SUBCOMMITTEE_SIZE;
         require(msg.value >= deposit, "AgentOracle: insufficient deposit");
 
-        requestId = platform.createRequest{value: deposit}(
+        requestId = platform.createAdvancedRequest{value: deposit}(
             JSON_API_AGENT_ID,
             address(this),
             this.handleResponse.selector,
-            payload
+            payload,
+            SUBCOMMITTEE_SIZE,
+            THRESHOLD,
+            ConsensusType.Threshold,
+            900 // timeout: 15 minutes
         );
 
         pendingRequests[requestId] = true;
@@ -112,7 +119,20 @@ interface IAgentRequester {
         bytes calldata payload
     ) external payable returns (uint256 requestId);
 
+    function createAdvancedRequest(
+        uint256 agentId,
+        address callbackAddress,
+        bytes4 callbackSelector,
+        bytes calldata payload,
+        uint256 subcommitteeSize,
+        uint256 threshold,
+        ConsensusType consensusType,
+        uint256 timeout
+    ) external payable returns (uint256 requestId);
+
     function getRequestDeposit() external view returns (uint256);
+
+    function getAdvancedRequestDeposit(uint256 subcommitteeSize) external view returns (uint256);
 }
 
 struct Response {
@@ -142,6 +162,8 @@ struct Request {
 }
 
 enum ResponseStatus { None, Pending, Success, Failed, TimedOut }
+
+enum ConsensusType { Majority, Threshold }
 
 // ============ JSON API Agent Interface ============
 

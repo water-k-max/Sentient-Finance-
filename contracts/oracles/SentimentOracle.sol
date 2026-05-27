@@ -22,6 +22,7 @@ contract SentimentOracle {
     uint256 public constant LLM_INFERENCE_PRICE = 0.07 ether;
     uint256 public constant LLM_PARSE_WEBSITE_PRICE = 0.10 ether;
     uint256 public constant SUBCOMMITTEE_SIZE = 3;
+    uint256 public constant THRESHOLD = 2; // 2 of 3 — faster, tolerates 1 failure
 
     // === CoinGecko config (JSON API Agent) ===
     string public constant COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd";
@@ -84,11 +85,15 @@ contract SentimentOracle {
         uint256 deposit = _computeDeposit(JSON_API_PRICE);
         require(msg.value >= deposit, "SentimentOracle: insufficient deposit for JSON API");
 
-        requestId = platform.createRequest{value: deposit}(
+        requestId = platform.createAdvancedRequest{value: deposit}(
             JSON_API_AGENT_ID,
             address(this),
             this.handleApiPrice.selector,
-            payload
+            payload,
+            SUBCOMMITTEE_SIZE,
+            THRESHOLD,
+            ConsensusType.Threshold,
+            900
         );
 
         pendingRequests[requestId] = true;
@@ -133,11 +138,15 @@ contract SentimentOracle {
         uint256 deposit = _computeDeposit(LLM_PARSE_WEBSITE_PRICE);
         require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Parse Website");
 
-        requestId = platform.createRequest{value: deposit}(
+        requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_PARSE_WEBSITE_AGENT_ID,
             address(this),
             this.handleWebsitePrice.selector,
-            payload
+            payload,
+            SUBCOMMITTEE_SIZE,
+            THRESHOLD,
+            ConsensusType.Threshold,
+            900
         );
 
         pendingRequests[requestId] = true;
@@ -180,11 +189,15 @@ contract SentimentOracle {
         uint256 deposit = _computeDeposit(LLM_INFERENCE_PRICE);
         require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Inference");
 
-        requestId = platform.createRequest{value: deposit}(
+        requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_INFERENCE_AGENT_ID,
             address(this),
             this.handleSentiment.selector,
-            payload
+            payload,
+            SUBCOMMITTEE_SIZE,
+            THRESHOLD,
+            ConsensusType.Threshold,
+            900
         );
 
         pendingRequests[requestId] = true;
@@ -234,11 +247,15 @@ contract SentimentOracle {
         uint256 deposit = _computeDeposit(LLM_INFERENCE_PRICE);
         require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Inference");
 
-        requestId = platform.createRequest{value: deposit}(
+        requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_INFERENCE_AGENT_ID,
             address(this),
             this.handleVolatility.selector,
-            payload
+            payload,
+            SUBCOMMITTEE_SIZE,
+            THRESHOLD,
+            ConsensusType.Threshold,
+            900
         );
 
         pendingRequests[requestId] = true;
@@ -306,7 +323,8 @@ contract SentimentOracle {
 
     // Internal
     function _computeDeposit(uint256 pricePerAgent) internal view returns (uint256) {
-        return platform.getRequestDeposit() + pricePerAgent * SUBCOMMITTEE_SIZE;
+        return platform.getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE)
+             + pricePerAgent * SUBCOMMITTEE_SIZE;
     }
 
     // Events for request tracking
@@ -326,8 +344,23 @@ interface IAgentRequester {
         bytes calldata payload
     ) external payable returns (uint256 requestId);
 
+    function createAdvancedRequest(
+        uint256 agentId,
+        address callbackAddress,
+        bytes4 callbackSelector,
+        bytes calldata payload,
+        uint256 subcommitteeSize,
+        uint256 threshold,
+        ConsensusType consensusType,
+        uint256 timeout
+    ) external payable returns (uint256 requestId);
+
     function getRequestDeposit() external view returns (uint256);
+
+    function getAdvancedRequestDeposit(uint256 subcommitteeSize) external view returns (uint256);
 }
+
+enum ConsensusType { Majority, Threshold }
 
 struct Response {
     address validator;

@@ -1,53 +1,78 @@
 import { useState } from "react";
+import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
 import TradingView from "./pages/TradingView";
 import AgentDashboard from "./pages/AgentDashboard";
 import Stats from "./pages/Stats";
 
-type Page = "trade" | "agents" | "stats";
-
 export default function App() {
-  const [page, setPage] = useState<Page>("trade");
-
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="border-b border-border px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <h1 className="font-heading text-xl font-bold text-cyan glow-text">
-            SENTIENT FINANCE
-          </h1>
-          <nav className="flex gap-4 text-sm">
-            {(["trade", "agents", "stats"] as Page[]).map((p) => (
-              <button
-                key={p}
-                onClick={() => setPage(p)}
-                className={`px-3 py-1 rounded transition-colors ${
-                  page === p
-                    ? "bg-cyan-dim text-cyan border border-cyan/30"
-                    : "text-gray-500 hover:text-gray-300"
-                }`}
+    <BrowserRouter>
+      <div className="min-h-screen flex flex-col">
+        {/* Header */}
+        <header className="border-b border-border px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <NavLink to="/trade" className="font-heading text-xl font-bold text-cyan glow-text no-underline">
+              SENTIENT FINANCE
+            </NavLink>
+            <nav className="flex gap-4 text-sm">
+              <NavLink
+                to="/trade"
+                className={({ isActive }) =>
+                  `px-3 py-1 rounded transition-colors no-underline ${
+                    isActive
+                      ? "bg-cyan-dim text-cyan border border-cyan/30"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`
+                }
               >
-                {p === "trade" ? "Trading" : p === "agents" ? "Agents" : "Stats"}
-              </button>
-            ))}
-          </nav>
-        </div>
-        <WalletButton />
-      </header>
+                Trading
+              </NavLink>
+              <NavLink
+                to="/agents"
+                className={({ isActive }) =>
+                  `px-3 py-1 rounded transition-colors no-underline ${
+                    isActive
+                      ? "bg-cyan-dim text-cyan border border-cyan/30"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`
+                }
+              >
+                Agents
+              </NavLink>
+              <NavLink
+                to="/stats"
+                className={({ isActive }) =>
+                  `px-3 py-1 rounded transition-colors no-underline ${
+                    isActive
+                      ? "bg-cyan-dim text-cyan border border-cyan/30"
+                      : "text-gray-500 hover:text-gray-300"
+                  }`
+                }
+              >
+                Stats
+              </NavLink>
+            </nav>
+          </div>
+          <WalletButton />
+        </header>
 
-      {/* Content */}
-      <main className="flex-1">
-        {page === "trade" && <TradingView />}
-        {page === "agents" && <AgentDashboard />}
-        {page === "stats" && <Stats />}
-      </main>
+        {/* Content */}
+        <main className="flex-1">
+          <Routes>
+            <Route path="/" element={<Navigate to="/trade" replace />} />
+            <Route path="/trade" element={<TradingView />} />
+            <Route path="/agents" element={<AgentDashboard />} />
+            <Route path="/stats" element={<Stats />} />
+          </Routes>
+        </main>
 
-      {/* Footer */}
-      <footer className="border-t border-border px-6 py-2 text-xs text-gray-600 flex justify-between">
-        <span>Sentient Finance v0.1 — Somnia Agentathon 2026</span>
-        <span>Built on Somnia L1 — Keeper-free, Agent-native</span>
-      </footer>
-    </div>
+        {/* Footer */}
+        <footer className="border-t border-border px-6 py-2 text-xs text-gray-600 flex justify-between">
+          <span>Sentient Finance v0.1 — Somnia Agentathon 2026</span>
+          <span>Built on Somnia L1 — Keeper-free, Agent-native</span>
+        </footer>
+      </div>
+    </BrowserRouter>
   );
 }
 
