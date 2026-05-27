@@ -16,8 +16,8 @@ export const CONTRACT_ADDRESSES = {
   agentInterface: "0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499",
   mockPriceFeed: "0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19",
   oracleAdapter: "0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0",
-  agentOracle: "0xF026E887A1D91158ce4Ec0775e1ed6350B3C0eDa",
-  sentimentOracle: "0xC6820057c77394bB73E607CD76Ef0b600bfAaAAd",
+  agentOracle: "0xfB2DCde9E6A634dfC70ea0d529DE48630F72F0f9",
+  sentimentOracle: "0xC8c4a728b9A3A1e700F6ff59fBdb08De3657B584",
 };
 
 export const SOMNIA_CHAIN_ID = 50312;
