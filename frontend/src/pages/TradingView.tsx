@@ -12,6 +12,7 @@ import { useEventFeed } from "../hooks/useEventFeed";
 import { isDeployed } from "../config/addresses";
 import { getPerpEngineWithSigner, pairToBytes32 } from "../lib/contracts";
 import { useOraclePrice } from "../hooks/useOraclePrice";
+import { getPriceHistory, addPricePoint, subscribeToPriceHistory } from "../lib/priceHistory";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
 
@@ -40,15 +41,18 @@ export default function TradingView() {
   const [mockBids, setMockBids] = useState<Array<{ price: number; size: number }>>([]);
   const [mockAsks, setMockAsks] = useState<Array<{ price: number; size: number }>>([]);
   const [mockEvents, setMockEvents] = useState<string[]>([]);
-  const [priceHistory, setPriceHistory] = useState<number[]>([]);
+  const [priceHistory, setPriceHistory] = useState<number[]>(getPriceHistory);
 
-  // Use oracle price for chart, fallback to mock
+  // Subscribe to persistent price store (survives tab switches)
+  useEffect(() => {
+    setPriceHistory(getPriceHistory());
+    return subscribeToPriceHistory(() => setPriceHistory([...getPriceHistory()]));
+  }, []);
+
+  // Append oracle price to persistent store
   useEffect(() => {
     if (oraclePrice) {
-      setPriceHistory((prev) => {
-        const next = [...prev, oraclePrice];
-        return next.slice(-50);
-      });
+      addPricePoint(oraclePrice);
     }
   }, [oraclePrice]);
 
