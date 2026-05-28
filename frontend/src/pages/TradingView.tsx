@@ -9,7 +9,7 @@ import { useWallet } from "../hooks/useWallet";
 import { useOrderBook } from "../hooks/useOrderBook";
 import { usePosition } from "../hooks/usePosition";
 import { useEventFeed } from "../hooks/useEventFeed";
-import { isDeployed } from "../config/addresses";
+import { isDeployed as checkDeployed } from "../config/addresses";
 import { getPerpEngineWithSigner, pairToBytes32 } from "../lib/contracts";
 import { useOraclePrice } from "../hooks/useOraclePrice";
 import { getPriceHistory, addPricePoint, subscribeToPriceHistory } from "../lib/priceHistory";
@@ -31,7 +31,8 @@ export default function TradingView() {
   const { address, signer, connected } = useWallet();
   const livePosition = usePosition(address);
   const liveEvents = useEventFeed();
-  const isLive = isDeployed() && connected;
+  const isDeployed = checkDeployed();  // contracts exist on testnet
+  const isLive = isDeployed && connected;  // wallet connected + deployed
   const oraclePrice = useOraclePrice(pair);
 
   // Transaction status
@@ -106,14 +107,15 @@ export default function TradingView() {
     return () => clearInterval(interval);
   }, [pair, config, isLive]);
 
-  // Use live or mock data
-  const bids = isLive
+  // Use live or mock data — public reads use isDeployed (RPC, no wallet needed)
+  // Only TradeForm + Positions need the wallet
+  const bids = isDeployed
     ? liveOrderBook.bids.map((b) => ({ price: b.price, size: b.size }))
     : mockBids;
-  const asks = isLive
+  const asks = isDeployed
     ? liveOrderBook.asks.map((a) => ({ price: a.price, size: a.size }))
     : mockAsks;
-  const events = isLive
+  const events = isDeployed
     ? liveEvents.map((e) => e.message)
     : mockEvents;
 
@@ -174,7 +176,7 @@ export default function TradingView() {
             <option value="SOL-USD">SOL-USD</option>
           </select>
         </div>
-        {isLive && liveOrderBook.loading ? (
+        {isDeployed && liveOrderBook.loading ? (
           <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">Loading...</div>
         ) : (
           <OrderBook bids={bids} asks={asks} />
@@ -201,7 +203,7 @@ export default function TradingView() {
         </div>
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="px-4 py-2 border-b border-border text-sm text-gray-400 font-heading">
-            AGENT ACTIVITY {isLive && <span className="text-green ml-2">● LIVE</span>}
+            AGENT ACTIVITY {isDeployed && <span className="text-green ml-2">● LIVE</span>}
           </div>
           <EventFeed events={events} />
         </div>
