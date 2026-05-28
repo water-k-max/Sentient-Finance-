@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title MockPriceFeed — Admin-controlled mock price feed for testing
+/// @title MockPriceFeed — @deprecated Replaced by SomniaPriceOracle + KeeperRegistry
+/// Kept for test suite compatibility. Not used in production deployment.
 contract MockPriceFeed {
     address public owner;
     uint256 public latestPrice;

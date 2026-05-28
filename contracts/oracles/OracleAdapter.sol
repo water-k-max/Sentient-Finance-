@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title OracleAdapter — Wraps price feeds for MarginVault and Sentinel
+/// @title OracleAdapter — @deprecated Replaced by SomniaPriceOracle (keeper median)
+/// Kept for test suite compatibility. Not used in production deployment.
 contract OracleAdapter {
     address public owner;
     address public priceFeed;
