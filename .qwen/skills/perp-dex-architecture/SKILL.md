@@ -194,25 +194,41 @@ function setSentiment(string calldata sentiment) external {
 
 Somnia Agents fetch prices via async validator consensus (30-120s). For real-time DEX UX:
 
-1. **Instant path** — `MockPriceFeed.updatePrice()` called from an off-chain script that fetches CoinGecko via HTTP directly. ~1s latency, centralized.
-2. **Verified path** — `AgentOracle.requestPrice()` → Somnia JSON API Agent → async callback. 30-120s, decentralized.
-3. **Hybrid** — Use MockPriceFeed for the trading UI, Somnia Agent verification for the "zero keeper" proof. Best for agentathon demos.
+### Primary: Keeper-Median Oracle (~2-3s)
 
-### Threshold Consensus (2/3) vs Majority (3/3)
-
-Always use `createAdvancedRequest` with Threshold (2/3) for price oracles:
+Better than Somnia Agents for real-time pricing. Keepers post prices via direct transactions.
+See `somnia-keeper-median-oracle` skill for full implementation.
 
 ```solidity
-requestId = platform.createAdvancedRequest{value: deposit}(
-    agentId,
-    address(this),
-    this.handleResponse.selector,
-    payload,
-    SUBCOMMITTEE_SIZE,   // 3
-    THRESHOLD,           // 2 — finalizes when ANY 2 validators respond
-    ConsensusType.Threshold,
-    900                  // timeout: 15 minutes
-);
+// From SomniaPriceOracle.sol (deployed on testnet)
+SomniaPriceOracle:   0xFbA084Db55bc52B6c3a872963636b69145FE834e
+CompositeOracle:     0x9643278A02453da6e7087873440942f8e99266B8
+
+// Frontend reads via:
+function useOraclePrice(pair, pollInterval = 1500): number | null {
+    const oracle = new ethers.Contract(compositeOracleAddr, [
+        "function getLastPrice() view returns (uint256, uint256)",
+    ], provider);
+    const [raw] = await oracle.getLastPrice();
+    return Number(raw) / 1e18; // 18 decimal format
+}
 ```
+
+### Fallback: MockPriceFeed (~1s, centralized)
+
+For instant updates from an off-chain script:
+
+```typescript
+// scripts/updatePrice.ts — fetches CoinGecko directly, pushes on-chain
+const resp = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd");
+const price = BigInt(Math.floor(data.bitcoin.usd * 1e8));
+MockPriceFeed.attach(MOCK_FEED).updatePrice(price);
+OracleAdapter.attach(ORACLE).updatePriceDirect(price); // emits PriceUpdated → cascade
+```
+
+### Async Verification: Somnia JSON API Agent (30-120s)
+
+Used for decentralized verification badge, not real-time execution.
+See `somnia-multi-agent` skill for implementation.
 
 ## Security Considerations

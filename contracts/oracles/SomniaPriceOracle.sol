@@ -29,7 +29,7 @@ contract SomniaPriceOracle {
     bool public halted;
 
     // Keeper median events (compatible with existing reactive cascade)
-    event PriceUpdated(bytes32 indexed asset, uint256 price, uint256 timestamp);
+    event PriceUpdated(bytes32 asset, uint256 price, uint256 timestamp);
     event OracleHalted(string reason, uint256 timestamp);
     event OracleResumed(uint256 timestamp);
 
