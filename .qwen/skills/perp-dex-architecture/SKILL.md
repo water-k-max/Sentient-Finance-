@@ -190,9 +190,29 @@ function setSentiment(string calldata sentiment) external {
 - **Match cap** — `MAX_MATCHES_PER_CALL (10)` prevents runaway gas on large market sweeps
 - **Batch PnL updates** — `updatePnLBatch(traders[])` for partial updates (O(k) vs O(n))
 
-## Security Considerations
+## Price Oracle Latency
 
-- **Authorization** — Only authorized contracts can call `settlePosition`, `liquidate`, `lockMargin`
-- **Position-per-trader** — Simplified model; production needs multi-position support
-- **Re-entrancy** — No external calls during internal state mutations
-- **Overflow** — Solidity 0.8.x native checks + `unchecked` blocks where safe
+Somnia Agents fetch prices via async validator consensus (30-120s). For real-time DEX UX:
+
+1. **Instant path** — `MockPriceFeed.updatePrice()` called from an off-chain script that fetches CoinGecko via HTTP directly. ~1s latency, centralized.
+2. **Verified path** — `AgentOracle.requestPrice()` → Somnia JSON API Agent → async callback. 30-120s, decentralized.
+3. **Hybrid** — Use MockPriceFeed for the trading UI, Somnia Agent verification for the "zero keeper" proof. Best for agentathon demos.
+
+### Threshold Consensus (2/3) vs Majority (3/3)
+
+Always use `createAdvancedRequest` with Threshold (2/3) for price oracles:
+
+```solidity
+requestId = platform.createAdvancedRequest{value: deposit}(
+    agentId,
+    address(this),
+    this.handleResponse.selector,
+    payload,
+    SUBCOMMITTEE_SIZE,   // 3
+    THRESHOLD,           // 2 — finalizes when ANY 2 validators respond
+    ConsensusType.Threshold,
+    900                  // timeout: 15 minutes
+);
+```
+
+## Security Considerations

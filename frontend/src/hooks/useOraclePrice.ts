@@ -2,9 +2,6 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
-const ORACLE_ABI = [
-  "function getIndexPrice(bytes32) view returns (uint256)",
-];
 
 const PERP_ENGINE_ABI = [
   "function getMarkPrice(bytes32 pairId) view returns (uint256)",
@@ -15,19 +12,20 @@ export function useOraclePrice(pair: string, pollInterval = 3000): number | null
   const [price, setPrice] = useState<number | null>(null);
 
   useEffect(() => {
-    const oracleAddr = CONTRACT_ADDRESSES.oracleAdapter;
+    const oracleAddr = CONTRACT_ADDRESSES.compositeOracle;
     if (!oracleAddr || oracleAddr === ethers.ZeroAddress) return;
 
     let cancelled = false;
     const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
-    const oracle = new ethers.Contract(oracleAddr, ORACLE_ABI, provider);
-    const pairId = ethers.keccak256(ethers.toUtf8Bytes(pair));
+    const oracle = new ethers.Contract(oracleAddr, [
+      "function getLastPrice() view returns (uint256 price, uint256 timestamp)",
+    ], provider);
 
     const fetch = async () => {
       try {
-        const raw = await oracle.getIndexPrice(pairId);
+        const [raw] = await oracle.getLastPrice();
         if (cancelled) return;
-        if (raw > 0n) setPrice(Number(raw) / 1e8);
+        if (raw > 0n) setPrice(Number(raw) / 1e18);
       } catch (e) {
         // silent
       }
