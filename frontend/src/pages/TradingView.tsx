@@ -33,7 +33,7 @@ export default function TradingView() {
   const liveEvents = useEventFeed();
   const isDeployed = checkDeployed();  // contracts exist on testnet
   const isLive = isDeployed && connected;  // wallet connected + deployed
-  const oraclePrice = useOraclePrice(pair);
+  const oraclePrice = useOraclePrice(pair, 1500); // poll every 1.5s
 
   // Transaction status
   const [txStatus, setTxStatus] = useState<string | null>(null);
@@ -189,7 +189,7 @@ export default function TradingView() {
           <PriceChart data={priceHistory} pair={pair} />
         </div>
         <div className="p-4">
-          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} txStatus={txStatus} />
+          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} txStatus={txStatus} oraclePrice={oraclePrice ?? 0} />
         </div>
       </div>
 

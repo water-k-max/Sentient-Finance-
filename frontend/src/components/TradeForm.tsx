@@ -5,11 +5,13 @@ export default function TradeForm({
   symbol = "BTC",
   isLive = false,
   txStatus = null,
+  oraclePrice = 50000,
 }: {
   onTrade: (type: "buy" | "sell", size: number, leverage: number, price?: number) => void;
   symbol?: string;
   isLive?: boolean;
   txStatus?: string | null;
+  oraclePrice?: number;
 }) {
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [size, setSize] = useState("0.1");
@@ -17,12 +19,13 @@ export default function TradeForm({
   const [price, setPrice] = useState("");
   const [orderType, setOrderType] = useState<"limit" | "market">("market");
 
+  const refPrice = oraclePrice || 50000;
   const estimatedMargin =
-    parseFloat(size || "0") * 50000 / leverage;
+    parseFloat(size || "0") * refPrice / leverage;
   const estimatedLiqPrice =
     side === "buy"
-      ? 50000 * (1 - 1 / leverage + 0.05)
-      : 50000 * (1 + 1 / leverage - 0.05);
+      ? refPrice * (1 - 1 / leverage + 0.05)
+      : refPrice * (1 + 1 / leverage - 0.05);
 
   const isSubmitting = txStatus === "pending" || txStatus === "confirming";
 
