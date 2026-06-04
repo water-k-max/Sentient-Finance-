@@ -1,18 +1,5 @@
 import { ethers } from "hardhat";
-
-// Deployed addresses
-const REGISTRY = "0xAb3b04A51f052c817969EF28DeF409FAF9544756";
-const ORACLE = "0xFbA084Db55bc52B6c3a872963636b69145FE834e";
-const COMPOSITE = "0x9643278A02453da6e7087873440942f8e99266B8";
-
-const ORDER_BOOKS: Record<string, string> = {
-  "BTC-USD": "0xA830E52C62F7694Ed859d9D6414cc203FC20B481",
-  "ETH-USD": "0x64E1235dFd0AC1887B5FB852309f959817ac45B2",
-  "SOL-USD": "0x1873B69a805Bd771cB74bF7a38997c730dcF3158",
-};
-const MARGIN_VAULT = "0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b";
-const MOCK_FEED = "0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19";
-const OLD_ORACLE = "0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
 const PRICE_SCALE = 10n ** 8n;
 const SIZE_SCALE = 10n ** 18n;
@@ -25,7 +12,7 @@ async function main() {
   // ============================================================
   console.log("1️⃣  Adding keepers to registry...");
   const KeeperRegistry = await ethers.getContractFactory("KeeperRegistry");
-  const registry = KeeperRegistry.attach(REGISTRY);
+  const registry = KeeperRegistry.attach(CONTRACT_ADDRESSES.keeperRegistry);
 
   const keeper2 = "0x0000000000000000000000000000000000000002";
   const keeper3 = "0x0000000000000000000000000000000000000003";
@@ -76,10 +63,10 @@ async function main() {
   };
 
   const SomniaPriceOracle = await ethers.getContractFactory("SomniaPriceOracle");
-  const oracle = SomniaPriceOracle.attach(ORACLE);
+  const oracle = SomniaPriceOracle.attach(CONTRACT_ADDRESSES.somniaPriceOracle);
 
   const CompositeOracle = await ethers.getContractFactory("CompositeOracle");
-  const composite = CompositeOracle.attach(COMPOSITE);
+  const composite = CompositeOracle.attach(CONTRACT_ADDRESSES.compositeOracle);
 
   // Post keeper prices for all 3 pairs
   for (const [pair, data] of Object.entries(prices)) {
@@ -94,11 +81,11 @@ async function main() {
   // ============================================================
   console.log("\n3️⃣  Updating MockPriceFeed...");
   const MockPriceFeed = await ethers.getContractFactory("MockPriceFeed");
-  const feed = MockPriceFeed.attach(MOCK_FEED);
+  const feed = MockPriceFeed.attach(CONTRACT_ADDRESSES.mockPriceFeed);
   await (await feed.updatePrice(prices["BTC-USD"].wei)).wait();
 
   const OracleAdapter = await ethers.getContractFactory("OracleAdapter");
-  const oa = OracleAdapter.attach(OLD_ORACLE);
+  const oa = OracleAdapter.attach(CONTRACT_ADDRESSES.oracleAdapter);
   await (await oa.updatePriceDirect(prices["BTC-USD"].wei)).wait();
   console.log("   ✅ OracleAdapter also updated");
 
@@ -108,9 +95,9 @@ async function main() {
   console.log("\n4️⃣  Reseeding order books at current prices...");
   const OrderBook = await ethers.getContractFactory("OrderBook");
   const MarginVault = await ethers.getContractFactory("MarginVault");
-  const vault = MarginVault.attach(MARGIN_VAULT);
+  const vault = MarginVault.attach(CONTRACT_ADDRESSES.marginVault);
 
-  for (const [pairName, obAddr] of Object.entries(ORDER_BOOKS)) {
+  for (const [pairName, obAddr] of Object.entries(CONTRACT_ADDRESSES.orderBooks)) {
     const pd = prices[pairName];
     const midPrice = pd.wei;  // 8-decimal price
     const ob = OrderBook.attach(obAddr);

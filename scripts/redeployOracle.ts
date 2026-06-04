@@ -1,12 +1,12 @@
 import { ethers } from "hardhat";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  const REGISTRY = "0xAb3b04A51f052c817969EF28DeF409FAF9544756";
   const ASSET = ethers.keccak256(ethers.toUtf8Bytes("BTC-USD"));
 
   const Oracle = await ethers.getContractFactory("SomniaPriceOracle");
-  const oracle = await Oracle.deploy(REGISTRY);
+  const oracle = await Oracle.deploy(CONTRACT_ADDRESSES.keeperRegistry);
   await oracle.waitForDeployment();
   console.log(`SomniaPriceOracle: ${await oracle.getAddress()}`);
 

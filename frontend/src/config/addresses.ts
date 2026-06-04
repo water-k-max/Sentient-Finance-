@@ -1,29 +1,26 @@
 // Deployed contract addresses on Somnia testnet
 // Deployed: 2026-05-26 from 0x32D35e6A1fDdbc29aC11276A22bFAD03aAa1Dc83
+// Also update scripts/addresses.ts after every re-deployment (canonical for Hardhat scripts).
 
 export const CONTRACT_ADDRESSES = {
-  marginVault: "0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b",
-  perpEngine: "0xaA6e6c28EceFAAbCDD71b4EBD8bAF20803fF6230",
-  orderBookFactory: "0x62991Cebaf011Ebdc7b6ABA3Eb5cA7e517dEAd15",
-  orderBooks: {
-    "BTC-USD": "0xA830E52C62F7694Ed859d9D6414cc203FC20B481",
-    "ETH-USD": "0x64E1235dFd0AC1887B5FB852309f959817ac45B2",
-    "SOL-USD": "0x1873B69a805Bd771cB74bF7a38997c730dcF3158",
+  "mockUSDC": "0x8D06699a029869f88437ecb10736B57306D3953F",
+  "mockPriceFeed": "0xfFcfbe79bAe362734bE77712a34b9Fb35fa86680",
+  "oracleAdapter": "0xA159BE1397c49f8Bb662E1ae7E9477BeAf9899c1",
+  "marginVault": "0x2396207Bfe22190E0d8B8A511E9Ceae7d4E3f15D",
+  "perpEngine": "0x67bae6CA52fAEeB93C1cABAD9C5821A25124F871",
+  "orderBookFactory": "0xae27803c296916eE36A83220670eB918cAE4BcA5",
+  "orderBooks": {
+    "BTC-USD": "0x3B10165FD2490575fD514BE52cCCcAd57b3a284e",
+    "ETH-USD": "0xddFBCae15030fF8b23CAd5F4598e7f7801F8A2f9",
+    "SOL-USD": "0x51B411C22daaBc6130600e4c86cCe1Fac3E588CC"
   },
-  liquidationSentinel: "0x002b992AE8E4867310Fb487765F872dFE9e08b61",
-  liquidityProviderAgent: "0x4A15Ab0CA037C3Da4177b85B74697aC136f73af7",
-  enhancedLiquidityProviderAgent: "0xB2Dc7E795D61E0F1C1C8E17B9935bDbB7557ffBd",
-  agentInterface: "0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499",
-  // @deprecated — not used by current hooks (replaced by SomniaPriceOracle)
-  mockPriceFeed: "0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19",
-  oracleAdapter: "0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0",
-  agentOracle: "0xfB2DCde9E6A634dfC70ea0d529DE48630F72F0f9",
-  sentimentOracle: "0xC8c4a728b9A3A1e700F6ff59fBdb08De3657B584",
-  keeperRegistry: "0xAb3b04A51f052c817969EF28DeF409FAF9544756",
-  somniaPriceOracle: "0x360D143528a4767359720D2E7E848FC96b8246e6",
-  compositeOracle: "0x771E4C8fbF26012fcdD54d24600a5bBA3441b751",
+  "liquidationSentinel": "0xDBB064C78d0d42527a702fFe4d9e8F359f58FB8D",
+  "liquidityProviderAgent": "0x1Ed3f6994C66aBCd142cEF939D7A50B518fD4246",
+  "agentInterface": "0x7C07f58CBF26Ae5FFaEBB277A30283935E5E499F",
+  "enhancedLiquidityProviderAgent": "0x5e9f53f52C7368C6c857e38e4ED2560cB29dfBF4",
+  "sentimentOracle": "0xFCd8440d2097B7297A9c0944B7Bd448D9D4dCB2f",
+  "agentOracle": "0x65E02f9D13A8D8E35e5D7e9f62Ae90dcA38140b2"
 };
-
 export const SOMNIA_CHAIN_ID = 50312;
 export const SOMNIA_RPC_URL = "https://dream-rpc.somnia.network";
 

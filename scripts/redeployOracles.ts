@@ -1,7 +1,7 @@
 import { ethers } from "hardhat";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
 const PLATFORM = "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776";
-const AGENT_INTERFACE = "0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
@@ -21,7 +21,7 @@ async function main() {
 
   // Subscribe new AgentOracle to AgentInterface
   const AgentInterface = await ethers.getContractFactory("AgentInterface");
-  const agentInterface = AgentInterface.attach(AGENT_INTERFACE);
+  const agentInterface = AgentInterface.attach(CONTRACT_ADDRESSES.agentInterface);
   const PRICE_UPDATED_TOPIC = await agentInterface.PRICE_UPDATED_TOPIC();
   await agentInterface.subscribe(await agentOracle.getAddress(), PRICE_UPDATED_TOPIC);
   console.log("✅ AgentOracle subscribed to AgentInterface");

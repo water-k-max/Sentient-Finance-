@@ -2,12 +2,20 @@
 pragma solidity ^0.8.24;
 
 import {Position, IMarginVault} from "../interfaces/IMarginVault.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title MarginVault — Clearinghouse for perpetual swap collateral, positions, and margin enforcement
-contract MarginVault is IMarginVault {
+contract MarginVault is IMarginVault, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ============ State ============
 
+    IERC20 public immutable collateralToken;
+
     mapping(address => uint256) public collateralBalances;
+    mapping(address => uint256) public lockedMargin; // margin locked in open positions
     mapping(address => Position) public positions;
     address[] public trackedTraders;
     mapping(address => bool) public isTracked;
@@ -27,11 +35,17 @@ contract MarginVault is IMarginVault {
         _;
     }
 
-    constructor() {
+    /// @param _collateralToken  Address of the ERC-20 used as collateral (MockUSDC on testnet)
+    constructor(address _collateralToken) {
+        require(
+            _collateralToken != address(0),
+            "MarginVault: zero token address"
+        );
+        collateralToken = IERC20(_collateralToken);
         owner = msg.sender;
     }
 
-    // ============ External Functions ============
+    // ============ Admin ============
 
     function setAuthorized(address _addr, bool _authorized) external onlyOwner {
         authorized[_addr] = _authorized;
@@ -41,35 +55,77 @@ contract MarginVault is IMarginVault {
         return authorized[_addr];
     }
 
-    /// @notice Deposit USDC collateral into the vault
-    function deposit(uint256 amount) external {
+    // ============ Collateral ============
+
+    /// @notice Deposit USDC collateral into the vault.
+    ///         Caller must have approved this contract for `amount` on the collateral token.
+    function deposit(uint256 amount) external nonReentrant {
         require(amount > 0, "MarginVault: amount must be > 0");
+        // Pull tokens from caller — this is the actual ERC-20 transfer
+        collateralToken.safeTransferFrom(msg.sender, address(this), amount);
         collateralBalances[msg.sender] += amount;
         emit Deposit(msg.sender, amount);
     }
 
-    /// @notice Withdraw free collateral (not locked in a position)
-    function withdraw(uint256 amount) external {
+    /// @notice Withdraw free (unlocked) collateral back to the caller.
+    function withdraw(uint256 amount) external nonReentrant {
         require(amount > 0, "MarginVault: amount must be > 0");
-        uint256 freeMargin = getFreeMargin(msg.sender);
-        require(freeMargin >= amount, "MarginVault: insufficient free margin");
+        uint256 free = getFreeMargin(msg.sender);
+        require(free >= amount, "MarginVault: insufficient free margin");
+        // Effects before interaction (CEI)
         collateralBalances[msg.sender] -= amount;
+        // Send tokens back to caller
+        collateralToken.safeTransfer(msg.sender, amount);
         emit Withdrawal(msg.sender, amount);
     }
 
-    /// @notice Lock margin for an order placement (called by OrderBook)
-    function lockMargin(address trader, uint256 amount) external onlyAuthorized {
-        require(collateralBalances[trader] >= amount, "MarginVault: insufficient balance");
-        collateralBalances[trader] -= amount;
-        // Margin is considered locked in the Position struct, tracked via margin field
+    /// @notice Adjust a trader's collateral by a signed delta (used by applyFunding).
+    ///         Positive delta = credit, negative delta = debit.
+    function adjustMargin(
+        address trader,
+        int256 delta
+    ) external onlyAuthorized {
+        if (delta > 0) {
+            collateralBalances[trader] += uint256(delta);
+        } else {
+            uint256 absDelta = uint256(-delta);
+            require(
+                collateralBalances[trader] >= absDelta,
+                "MarginVault: insufficient collateral for funding debit"
+            );
+            collateralBalances[trader] -= absDelta;
+        }
     }
 
-    /// @notice Release margin back to collateral (called on cancel/close)
-    function releaseMargin(address trader, uint256 amount) external onlyAuthorized {
+    /// @notice Lock margin for an order placement (called by OrderBook).
+    function lockMargin(
+        address trader,
+        uint256 amount
+    ) external onlyAuthorized {
+        require(
+            collateralBalances[trader] >= amount,
+            "MarginVault: insufficient balance to lock"
+        );
+        collateralBalances[trader] -= amount;
+        lockedMargin[trader] += amount;
+    }
+
+    /// @notice Release locked margin back to free collateral (called on cancel / close).
+    function releaseMargin(
+        address trader,
+        uint256 amount
+    ) external onlyAuthorized {
+        require(
+            lockedMargin[trader] >= amount,
+            "MarginVault: release exceeds locked amount"
+        );
+        lockedMargin[trader] -= amount;
         collateralBalances[trader] += amount;
     }
 
-    /// @notice Settle a matched position for both counterparties
+    // ============ Position Lifecycle ============
+
+    /// @notice Settle a matched position for both counterparties (called by OrderBook).
     function settlePosition(
         address longTrader,
         address shortTrader,
@@ -77,57 +133,65 @@ contract MarginVault is IMarginVault {
         uint256 fillSize,
         uint256 longLeverage,
         uint256 shortLeverage
-    ) external onlyAuthorized {
+    ) external onlyAuthorized nonReentrant {
         _openPosition(longTrader, true, fillPrice, fillSize, longLeverage);
         _openPosition(shortTrader, false, fillPrice, fillSize, shortLeverage);
         emit PositionSettled(longTrader, shortTrader, fillPrice, fillSize);
     }
 
-    /// @notice Get margin health factor for a position (1e18 = 100%)
-    function marginHealth(address trader) public view returns (uint256) {
-        Position memory pos = positions[trader];
-        if (!pos.isOpen || pos.size == 0) return type(uint256).max;
+    /// @notice Liquidate an undercollateralised position.
+    ///         Only callable by an authorized address (LiquidationSentinel).
+    function liquidate(address trader) external onlyAuthorized nonReentrant {
+        Position storage pos = positions[trader];
+        require(pos.isOpen, "MarginVault: no open position");
+        require(
+            marginHealth(trader) < MAINTENANCE_MARGIN_RATIO,
+            "MarginVault: position is healthy"
+        );
 
-        int256 equity = int256Safe(pos.margin) + pos.unrealizedPnl;
-        if (equity <= 0) return 0;
+        // Cache values BEFORE zeroing (event needs them)
+        uint256 liqPrice = pos.liquidationPrice;
+        uint256 remainingMargin = pos.margin;
 
-        uint256 notional = (pos.size * pos.entryPrice) / 1e18;
-        if (notional == 0) return type(uint256).max;
-        return (uint256(equity) * pos.leverage * 1e18) / notional;
+        // Zero out position state
+        pos.isOpen = false;
+        pos.size = 0;
+        pos.margin = 0;
+        pos.unrealizedPnl = 0;
+
+        // Release any locked margin entry back to vault balance
+        // (insurance fund logic: remaining margin stays in vault as buffer)
+        lockedMargin[trader] = 0;
+
+        _removeTrader(trader);
+
+        // Emit with cached values — position is already zeroed above
+        emit LiquidationExecuted(trader, liqPrice, remainingMargin);
     }
 
-    /// @notice Update unrealized PnL for a single position
+    // ============ PnL ============
+
+    /// @notice Update unrealized PnL for a single position.
     function updatePnL(address trader, uint256 currentIndexPrice) external {
         _updatePnL(trader, currentIndexPrice);
     }
 
-    /// @notice Internal PnL update
-    function _updatePnL(address trader, uint256 currentIndexPrice) internal {
-        Position storage pos = positions[trader];
-        if (!pos.isOpen) return;
-
-        int256 pnl;
-        if (pos.isLong) {
-            pnl = int256(int256Safe(currentIndexPrice) - int256Safe(pos.entryPrice)) * int256Safe(pos.size) / 1e8;
-        } else {
-            pnl = int256(int256Safe(pos.entryPrice) - int256Safe(currentIndexPrice)) * int256Safe(pos.size) / 1e8;
-        }
-        pos.unrealizedPnl = pnl;
-
-        uint256 health = marginHealth(trader);
-        emit PnLUpdated(trader, pnl, health);
-    }
-
-    /// @notice Batch PnL update for a subset of traders — O(k) instead of O(n)
-    function updatePnLBatch(address[] calldata traders, uint256 currentIndexPrice) external {
+    /// @notice Batch PnL update for a paginated slice of traders — avoids gas limit on large sets.
+    ///         Call with (0, 100), (100, 200), etc.
+    function updatePnLBatch(
+        address[] calldata traders,
+        uint256 currentIndexPrice
+    ) external {
         for (uint256 i = 0; i < traders.length; i++) {
             _updatePnL(traders[i], currentIndexPrice);
         }
     }
 
-    /// @notice Update PnL for all tracked positions (called by reactive agent)
+    /// @notice Update PnL for all tracked positions (called by reactive agent).
+    ///         Use updatePnLBatch for large trader sets to avoid block gas limit.
     function updateAllPnL(uint256 currentIndexPrice) external {
-        for (uint256 i = 0; i < trackedTraders.length; i++) {
+        uint256 len = trackedTraders.length;
+        for (uint256 i = 0; i < len; i++) {
             address trader = trackedTraders[i];
             if (positions[trader].isOpen) {
                 _updatePnL(trader, currentIndexPrice);
@@ -135,24 +199,32 @@ contract MarginVault is IMarginVault {
         }
     }
 
-    /// @notice Liquidate an undercollateralized position (only Sentinel)
-    function liquidate(address trader) external onlyAuthorized {
-        Position storage pos = positions[trader];
-        require(pos.isOpen, "MarginVault: no open position");
-        require(marginHealth(trader) < MAINTENANCE_MARGIN_RATIO, "MarginVault: position healthy");
+    // ============ Views ============
 
-        uint256 remainingMargin = pos.margin;
-        // Distribute remaining margin: 50% to insurance fund (simplified: keep in vault)
-        // In production, would have a dedicated insurance fund address
-        pos.isOpen = false;
-        pos.size = 0;
-        pos.margin = 0;
+    /// @notice Margin health factor for a position (1e18 = 100%).
+    ///         Returns type(uint256).max when no open position.
+    function marginHealth(address trader) public view returns (uint256) {
+        Position memory pos = positions[trader];
+        if (!pos.isOpen || pos.size == 0) return type(uint256).max;
 
-        _removeTrader(trader);
-        emit LiquidationExecuted(trader, pos.liquidationPrice, remainingMargin);
+        int256 equity = int256Safe(pos.margin) + pos.unrealizedPnl;
+        if (equity <= 0) return 0;
+
+        uint256 notional = pos.size;
+        if (notional == 0) return type(uint256).max;
+
+        return (uint256(equity) * pos.leverage * 1e18) / notional;
     }
 
-    /// @notice Compute the liquidation price for a position (external wrapper)
+    /// @notice Free margin = collateral balance not locked in open positions.
+    function getFreeMargin(address trader) public view returns (uint256) {
+        // lockedMargin tracks exactly what is reserved for open positions
+        uint256 bal = collateralBalances[trader];
+        uint256 locked = lockedMargin[trader];
+        if (locked >= bal) return 0;
+        return bal - locked;
+    }
+
     function computeLiquidationPrice(
         bool isLong,
         uint256 entryPrice,
@@ -161,12 +233,20 @@ contract MarginVault is IMarginVault {
         return _computeLiquidationPrice(isLong, entryPrice, leverage);
     }
 
-    function getPosition(address trader) external view returns (Position memory) {
+    function getPosition(
+        address trader
+    ) external view returns (Position memory) {
         return positions[trader];
     }
 
-    function getCollateralBalance(address trader) external view returns (uint256) {
+    function getCollateralBalance(
+        address trader
+    ) external view returns (uint256) {
         return collateralBalances[trader];
+    }
+
+    function getLockedMargin(address trader) external view returns (uint256) {
+        return lockedMargin[trader];
     }
 
     function getTrackedTraders() external view returns (address[] memory) {
@@ -178,39 +258,48 @@ contract MarginVault is IMarginVault {
     }
 
     function trackedTraderAt(uint256 index) external view returns (address) {
-        require(index < trackedTraders.length, "MarginVault: index out of bounds");
+        require(
+            index < trackedTraders.length,
+            "MarginVault: index out of bounds"
+        );
         return trackedTraders[index];
     }
 
-    // ============ Internal Functions ============
+    // ============ Internal ============
 
-    /// @notice Compute the liquidation price for a position
-    /// Prices are in 8-decimal fixed point (1e8 = $1.00)
+    function _updatePnL(address trader, uint256 currentIndexPrice) internal {
+        Position storage pos = positions[trader];
+        if (!pos.isOpen) return;
+
+        int256 priceDiff = pos.isLong
+            ? int256Safe(currentIndexPrice) - int256Safe(pos.entryPrice)
+            : int256Safe(pos.entryPrice) - int256Safe(currentIndexPrice);
+
+        // size is USDC notional in 6-dec, prices are in 8-dec
+        // PnL (6-dec USDC) = size * Δprice / entryPrice
+        int256 pnl = (priceDiff * int256Safe(pos.size)) / int256Safe(pos.entryPrice);
+        pos.unrealizedPnl = pnl;
+
+        emit PnLUpdated(trader, pnl, marginHealth(trader));
+    }
+
     function _computeLiquidationPrice(
         bool isLong,
         uint256 entryPrice,
         uint256 leverage
     ) internal pure returns (uint256) {
         require(leverage > 0, "MarginVault: leverage must be > 0");
-        // MAINTENANCE_MARGIN_RATIO is 5e16 (= 5%)
         if (isLong) {
-            // entryPrice * (1 - 1/leverage + maintRatio) = entryPrice * (leverage - 1) / leverage + entryPrice * maintRatio / 1e18
             uint256 base = (entryPrice * (leverage - 1)) / leverage;
             uint256 maint = (entryPrice * MAINTENANCE_MARGIN_RATIO) / 1e18;
             return base + maint;
         } else {
             uint256 base = (entryPrice * (leverage + 1)) / leverage;
             uint256 maint = (entryPrice * MAINTENANCE_MARGIN_RATIO) / 1e18;
-            unchecked {
-                return base - maint;
-            }
+            // base is always > maint for any sane leverage, but guard anyway
+            require(base > maint, "MarginVault: short liq price underflow");
+            return base - maint;
         }
-    }
-
-    function getFreeMargin(address trader) internal view returns (uint256) {
-        Position memory pos = positions[trader];
-        if (!pos.isOpen) return collateralBalances[trader];
-        return collateralBalances[trader];
     }
 
     function _openPosition(
@@ -220,16 +309,32 @@ contract MarginVault is IMarginVault {
         uint256 size,
         uint256 leverage
     ) internal {
+        // size is already in USDC 6-dec (notional = size USDC)
+        uint256 margin = size / leverage;
+
+        // Verify trader has enough free collateral to back this margin
+        require(
+            getFreeMargin(trader) >= margin,
+            "MarginVault: insufficient free margin for position"
+        );
+
+        // Lock the required margin
+        collateralBalances[trader] -= margin;
+        lockedMargin[trader] += margin;
+
         Position storage pos = positions[trader];
-        // Compute margin from the notional: (size * entryPrice / 1e18) / leverage
-        uint256 notional = (size * entryPrice) / 1e18;
-        pos.margin = notional / leverage;
         pos.trader = trader;
         pos.isLong = isLong;
         pos.entryPrice = entryPrice;
         pos.size = size;
         pos.leverage = leverage;
-        pos.liquidationPrice = _computeLiquidationPrice(isLong, entryPrice, leverage);
+        pos.margin = margin;
+        pos.liquidationPrice = _computeLiquidationPrice(
+            isLong,
+            entryPrice,
+            leverage
+        );
+        pos.unrealizedPnl = 0;
         pos.isOpen = true;
 
         if (!isTracked[trader]) {
@@ -241,10 +346,10 @@ contract MarginVault is IMarginVault {
     function _removeTrader(address trader) internal {
         if (!isTracked[trader]) return;
         isTracked[trader] = false;
-
-        for (uint256 i = 0; i < trackedTraders.length; i++) {
+        uint256 len = trackedTraders.length;
+        for (uint256 i = 0; i < len; i++) {
             if (trackedTraders[i] == trader) {
-                trackedTraders[i] = trackedTraders[trackedTraders.length - 1];
+                trackedTraders[i] = trackedTraders[len - 1];
                 trackedTraders.pop();
                 break;
             }
@@ -252,10 +357,12 @@ contract MarginVault is IMarginVault {
     }
 
     function int256Safe(uint256 value) internal pure returns (int256) {
-        require(value <= uint256(type(int256).max), "MarginVault: overflow");
+        require(
+            value <= uint256(type(int256).max),
+            "MarginVault: uint256 overflow to int256"
+        );
         return int256(value);
     }
 
-    // Allow vault to receive native tokens (for rebates, insurance fund)
     receive() external payable {}
 }

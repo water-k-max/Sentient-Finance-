@@ -133,7 +133,33 @@ contract PerpEngine {
             "PerpEngine: funding interval not reached"
         );
 
-        int256 fundingRate = int256Safe(_getMarkPrice(pairId)) - int256Safe(indexPrices[pairId]);
+        uint256 markPrice = _getMarkPrice(pairId);
+        uint256 indexPrice = indexPrices[pairId];
+        require(indexPrice > 0, "PerpEngine: no index price");
+
+        // fundingRate is positive when longs pay shorts, negative when shorts pay longs
+        int256 fundingRate = (int256Safe(markPrice) - int256Safe(indexPrice))
+            * 1e18
+            / int256Safe(indexPrice)
+            / int256Safe(FUNDING_INTERVAL);
+
+        address[] memory traders = marginVault.getTrackedTraders();
+        for (uint256 i = 0; i < traders.length; i++) {
+            Position memory pos = marginVault.getPosition(traders[i]);
+            if (!pos.isOpen) continue;
+
+            // funding payment = fundingRate * positionSize / 1e18
+            int256 payment = fundingRate * int256Safe(pos.size) / 1e18;
+
+            // longs pay (deduct), shorts receive (add) when fundingRate > 0
+            // vice versa when fundingRate < 0
+            if (pos.isLong) {
+                marginVault.adjustMargin(traders[i], -payment);
+            } else {
+                marginVault.adjustMargin(traders[i], payment);
+            }
+        }
+
         lastFundingTimes[pairId] = block.timestamp;
         emit FundingApplied(pairId, fundingRate, block.timestamp);
     }

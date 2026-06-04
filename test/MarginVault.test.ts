@@ -1,23 +1,28 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { MarginVault } from "../typechain-types";
+import { MarginVault, MockUSDC } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("MarginVault", function () {
   let marginVault: MarginVault;
+  let mockUSDC: MockUSDC;
   let owner: HardhatEthersSigner;
   let trader1: HardhatEthersSigner;
   let trader2: HardhatEthersSigner;
   let authorizedAddr: HardhatEthersSigner;
 
   const PRICE_SCALE = 10n ** 8n;
-  const SIZE_SCALE = 10n ** 18n;
+  const USDC_SCALE = 10n ** 6n;
 
   beforeEach(async function () {
     [owner, trader1, trader2, authorizedAddr] = await ethers.getSigners();
 
+    const MockUSDC = await ethers.getContractFactory("MockUSDC");
+    mockUSDC = await MockUSDC.deploy();
+    await mockUSDC.waitForDeployment();
+
     const MarginVaultFactory = await ethers.getContractFactory("MarginVault");
-    marginVault = await MarginVaultFactory.deploy();
+    marginVault = await MarginVaultFactory.deploy(await mockUSDC.getAddress());
     await marginVault.waitForDeployment();
 
     await marginVault.setAuthorized(await authorizedAddr.getAddress(), true);
@@ -25,7 +30,10 @@ describe("MarginVault", function () {
 
   describe("deposit", function () {
     it("should increase collateralBalance correctly", async function () {
-      const amount = 1000n * SIZE_SCALE; // 1000 USDC (18 decimals)
+      const amount = 1000n * USDC_SCALE;
+      const vaultAddr = await marginVault.getAddress();
+      await mockUSDC.mint(trader1.address, amount);
+      await mockUSDC.connect(trader1).approve(vaultAddr, amount);
       await marginVault.connect(trader1).deposit(amount);
 
       const balance = await marginVault.getCollateralBalance(
@@ -35,7 +43,10 @@ describe("MarginVault", function () {
     });
 
     it("should emit Deposit event", async function () {
-      const amount = 500n * SIZE_SCALE;
+      const amount = 500n * USDC_SCALE;
+      const vaultAddr = await marginVault.getAddress();
+      await mockUSDC.mint(trader1.address, amount);
+      await mockUSDC.connect(trader1).approve(vaultAddr, amount);
       const tx = await marginVault.connect(trader1).deposit(amount);
       const receipt = await tx.wait();
 
@@ -49,17 +60,7 @@ describe("MarginVault", function () {
   describe("settlePosition", function () {
     it("should create correct long and short positions", async function () {
       const fillPrice = 50000n * PRICE_SCALE;
-      const fillSize = 1n * SIZE_SCALE;
-
-      // We need authorized address to call settlePosition
-      const vaultAddr = await marginVault.getAddress();
-
-      // Note: settlePosition requires authorized caller and sets leverage
-      // which is set via the position struct. For testing, we use authorizedAddr.
-      // In production, OrderBook calls this after matching.
-
-      // For now, test that the function exists and can be called
-      // Full position testing requires OrderBook integration
+      const fillSize = 100n * USDC_SCALE;
     });
   });
 
@@ -74,8 +75,6 @@ describe("MarginVault", function () {
         leverage
       );
 
-      // Long liq: entryPrice * (leverage - 1) / leverage + entryPrice * maintRatio / 1e18
-      // = 50000 * 9 / 10 + 50000 * 0.05 = 45000 + 2500 = 47500
       const expected = 47500n * PRICE_SCALE;
       expect(liqPrice).to.equal(expected);
     });
@@ -90,8 +89,6 @@ describe("MarginVault", function () {
         leverage
       );
 
-      // Short liq: entryPrice * (leverage + 1) / leverage - entryPrice * maintRatio / 1e18
-      // = 50000 * 11 / 10 - 50000 * 0.05 = 55000 - 2500 = 52500
       const expected = 52500n * PRICE_SCALE;
       expect(liqPrice).to.equal(expected);
     });
@@ -99,10 +96,13 @@ describe("MarginVault", function () {
 
   describe("withdraw", function () {
     it("should allow withdrawal of free collateral", async function () {
-      const deposit = 1000n * SIZE_SCALE;
+      const deposit = 1000n * USDC_SCALE;
+      const vaultAddr = await marginVault.getAddress();
+      await mockUSDC.mint(trader1.address, deposit);
+      await mockUSDC.connect(trader1).approve(vaultAddr, deposit);
       await marginVault.connect(trader1).deposit(deposit);
 
-      const withdrawAmount = 500n * SIZE_SCALE;
+      const withdrawAmount = 500n * USDC_SCALE;
       await marginVault.connect(trader1).withdraw(withdrawAmount);
 
       const balance = await marginVault.getCollateralBalance(
@@ -112,7 +112,10 @@ describe("MarginVault", function () {
     });
 
     it("should revert if withdrawal would exceed balance", async function () {
-      const deposit = 100n * SIZE_SCALE;
+      const deposit = 100n * USDC_SCALE;
+      const vaultAddr = await marginVault.getAddress();
+      await mockUSDC.mint(trader1.address, deposit);
+      await mockUSDC.connect(trader1).approve(vaultAddr, deposit);
       await marginVault.connect(trader1).deposit(deposit);
 
       await expect(
@@ -123,20 +126,22 @@ describe("MarginVault", function () {
 
   describe("authorization", function () {
     it("should only allow authorized addresses to call lockMargin", async function () {
-      await marginVault.connect(trader1).deposit(100n * SIZE_SCALE);
+      const deposit = 100n * USDC_SCALE;
+      const vaultAddr = await marginVault.getAddress();
+      await mockUSDC.mint(trader1.address, deposit);
+      await mockUSDC.connect(trader1).approve(vaultAddr, deposit);
+      await marginVault.connect(trader1).deposit(deposit);
 
-      // Non-authorized address should fail
       await expect(
         marginVault.connect(trader1).lockMargin(
           await trader1.getAddress(),
-          10n * SIZE_SCALE
+          10n * USDC_SCALE
         )
       ).to.be.revertedWith("MarginVault: not authorized");
 
-      // Authorized address should succeed
       await marginVault.connect(authorizedAddr).lockMargin(
         await trader1.getAddress(),
-        10n * SIZE_SCALE
+        10n * USDC_SCALE
       );
     });
 

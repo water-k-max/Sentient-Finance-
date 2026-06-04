@@ -25,23 +25,25 @@ contract SentimentOracle {
     uint256 public constant THRESHOLD = 2; // 2 of 3 — faster, tolerates 1 failure
 
     // === CoinGecko config (JSON API Agent) ===
-    string public constant COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd";
+    string public constant COINGECKO_URL =
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd";
     string public constant COINGECKO_SELECTOR = "bitcoin.usd";
     uint8 public constant COINGECKO_DECIMALS = 8;
 
     // === CoinDesk config (LLM Parse Website Agent) ===
     string public constant COINDESK_URL = "https://www.coindesk.com/";
-    string public constant COINDESK_SEARCH_QUERY = "Find the current Bitcoin BTC price in dollars on this page";
+    string public constant COINDESK_SEARCH_QUERY =
+        "Find the current Bitcoin BTC price in dollars on this page";
 
     // === Sentiment analysis config (LLM Inference Agent) ===
     string[] public SENTIMENT_VALUES = ["bullish", "bearish", "neutral"];
 
     // === State ===
-    uint256 public apiPrice;          // From CoinGecko via JSON API Agent
-    uint256 public websitePrice;      // From CoinDesk via LLM Parse Website Agent
-    string public sentiment;          // From LLM Inference Agent
-    uint256 public volatilityScore;   // From LLM Inference Agent (0-100)
-    uint256 public consensusPrice;    // Final agreed price
+    uint256 public apiPrice; // From CoinGecko via JSON API Agent
+    uint256 public websitePrice; // From CoinDesk via LLM Parse Website Agent
+    string public sentiment; // From LLM Inference Agent
+    uint256 public volatilityScore; // From LLM Inference Agent (0-100)
+    uint256 public consensusPrice; // Final agreed price
     uint256 public lastUpdated;
 
     // Request tracking
@@ -57,7 +59,11 @@ contract SentimentOracle {
     event SentimentAnalyzed(string sentiment, uint256 timestamp);
     event VolatilityScored(uint256 score, uint256 timestamp);
     event ConsensusPriceSet(uint256 price, uint256 timestamp);
-    event PriceDivergenceAlert(uint256 apiPrice, uint256 websitePrice, uint256 divergenceBps);
+    event PriceDivergenceAlert(
+        uint256 apiPrice,
+        uint256 websitePrice,
+        uint256 divergenceBps
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "SentimentOracle: not owner");
@@ -83,7 +89,10 @@ contract SentimentOracle {
         );
 
         uint256 deposit = _computeDeposit(JSON_API_PRICE);
-        require(msg.value >= deposit, "SentimentOracle: insufficient deposit for JSON API");
+        require(
+            msg.value >= deposit,
+            "SentimentOracle: insufficient deposit for JSON API"
+        );
 
         requestId = platform.createAdvancedRequest{value: deposit}(
             JSON_API_AGENT_ID,
@@ -107,7 +116,10 @@ contract SentimentOracle {
         ResponseStatus status,
         Request calldata /* details */
     ) external {
-        require(msg.sender == address(platform), "SentimentOracle: only platform");
+        require(
+            msg.sender == address(platform),
+            "SentimentOracle: only platform"
+        );
         require(pendingRequests[requestId], "SentimentOracle: unknown request");
         delete pendingRequests[requestId];
 
@@ -125,18 +137,25 @@ contract SentimentOracle {
     // ============================================================
 
     /// @notice Request BTC price extraction from CoinDesk website
-    function requestWebsitePrice() external payable returns (uint256 requestId) {
+    function requestWebsitePrice()
+        external
+        payable
+        returns (uint256 requestId)
+    {
         bytes memory payload = abi.encodeWithSelector(
             ILLMParseWebsite.extractANumber.selector,
             COINDESK_URL,
             COINDESK_SEARCH_QUERY,
             0,
             type(uint256).max,
-            8  // 8 decimals
+            8 // 8 decimals
         );
 
         uint256 deposit = _computeDeposit(LLM_PARSE_WEBSITE_PRICE);
-        require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Parse Website");
+        require(
+            msg.value >= deposit,
+            "SentimentOracle: insufficient deposit for LLM Parse Website"
+        );
 
         requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_PARSE_WEBSITE_AGENT_ID,
@@ -160,7 +179,10 @@ contract SentimentOracle {
         ResponseStatus status,
         Request calldata /* details */
     ) external {
-        require(msg.sender == address(platform), "SentimentOracle: only platform");
+        require(
+            msg.sender == address(platform),
+            "SentimentOracle: only platform"
+        );
         require(pendingRequests[requestId], "SentimentOracle: unknown request");
         delete pendingRequests[requestId];
 
@@ -177,17 +199,27 @@ contract SentimentOracle {
     // ============================================================
 
     /// @notice Analyze sentiment of a crypto news headline
-    function analyzeSentiment(string calldata headline) external payable returns (uint256 requestId) {
+    function analyzeSentiment(
+        string calldata headline
+    ) external payable returns (uint256 requestId) {
         bytes memory payload = abi.encodeWithSelector(
             ILLMInference.inferString.selector,
-            string(abi.encodePacked("Classify the sentiment of this crypto news headline: ", headline)),
+            string(
+                abi.encodePacked(
+                    "Classify the sentiment of this crypto news headline: ",
+                    headline
+                )
+            ),
             "You are a crypto market sentiment analyst. Reply with exactly one word.",
             false, // chainOfThought
             SENTIMENT_VALUES
         );
 
         uint256 deposit = _computeDeposit(LLM_INFERENCE_PRICE);
-        require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Inference");
+        require(
+            msg.value >= deposit,
+            "SentimentOracle: insufficient deposit for LLM Inference"
+        );
 
         requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_INFERENCE_AGENT_ID,
@@ -211,7 +243,10 @@ contract SentimentOracle {
         ResponseStatus status,
         Request calldata /* details */
     ) external {
-        require(msg.sender == address(platform), "SentimentOracle: only platform");
+        require(
+            msg.sender == address(platform),
+            "SentimentOracle: only platform"
+        );
         require(pendingRequests[requestId], "SentimentOracle: unknown request");
         delete pendingRequests[requestId];
 
@@ -228,24 +263,31 @@ contract SentimentOracle {
 
     /// @notice Compute volatility score (0-100) from recent price history
     /// Accepts a string representation of comma-separated prices for the LLM prompt
-    function computeVolatilityScore(string calldata priceHistoryString) external payable returns (uint256 requestId) {
-        string memory prompt = string(abi.encodePacked(
-            "Given these recent BTC prices (comma-separated): ",
-            priceHistoryString,
-            ". Score the volatility from 0 (stable) to 100 (extremely volatile). Return only the number."
-        ));
+    function computeVolatilityScore(
+        string calldata priceHistoryString
+    ) external payable returns (uint256 requestId) {
+        string memory prompt = string(
+            abi.encodePacked(
+                "Given these recent BTC prices (comma-separated): ",
+                priceHistoryString,
+                ". Score the volatility from 0 (stable) to 100 (extremely volatile). Return only the number."
+            )
+        );
 
         bytes memory payload = abi.encodeWithSelector(
             ILLMInference.inferNumber.selector,
             prompt,
             "You are a financial volatility analyst. Return an integer from 0 to 100.",
-            0,  // minValue
+            0, // minValue
             100, // maxValue
             false // chainOfThought
         );
 
         uint256 deposit = _computeDeposit(LLM_INFERENCE_PRICE);
-        require(msg.value >= deposit, "SentimentOracle: insufficient deposit for LLM Inference");
+        require(
+            msg.value >= deposit,
+            "SentimentOracle: insufficient deposit for LLM Inference"
+        );
 
         requestId = platform.createAdvancedRequest{value: deposit}(
             LLM_INFERENCE_AGENT_ID,
@@ -269,7 +311,10 @@ contract SentimentOracle {
         ResponseStatus status,
         Request calldata /* details */
     ) external {
-        require(msg.sender == address(platform), "SentimentOracle: only platform");
+        require(
+            msg.sender == address(platform),
+            "SentimentOracle: only platform"
+        );
         require(pendingRequests[requestId], "SentimentOracle: unknown request");
         delete pendingRequests[requestId];
 
@@ -287,13 +332,21 @@ contract SentimentOracle {
     /// @notice Check if CoinGecko and CoinDesk prices diverge > threshold
     function _checkDivergence() internal {
         if (apiPrice > 0 && websitePrice > 0) {
-            uint256 diff = apiPrice > websitePrice ? apiPrice - websitePrice : websitePrice - apiPrice;
+            uint256 diff = apiPrice > websitePrice
+                ? apiPrice - websitePrice
+                : websitePrice - apiPrice;
             uint256 divergenceBps = (diff * 10000) / apiPrice;
 
             if (divergenceBps > divergenceThresholdBps) {
-                emit PriceDivergenceAlert(apiPrice, websitePrice, divergenceBps);
+                emit PriceDivergenceAlert(
+                    apiPrice,
+                    websitePrice,
+                    divergenceBps
+                );
                 // Use the lower price as consensus (conservative)
-                consensusPrice = apiPrice < websitePrice ? apiPrice : websitePrice;
+                consensusPrice = apiPrice < websitePrice
+                    ? apiPrice
+                    : websitePrice;
             } else {
                 // Average if within threshold
                 consensusPrice = (apiPrice + websitePrice) / 2;
@@ -312,7 +365,11 @@ contract SentimentOracle {
     }
 
     /// @notice Get required deposit for each agent type
-    function getDepositRequired() external view returns (uint256 jsonApi, uint256 llmInference, uint256 llmParseWebsite) {
+    function getDepositRequired()
+        external
+        view
+        returns (uint256 jsonApi, uint256 llmInference, uint256 llmParseWebsite)
+    {
         jsonApi = _computeDeposit(JSON_API_PRICE);
         llmInference = _computeDeposit(LLM_INFERENCE_PRICE);
         llmParseWebsite = _computeDeposit(LLM_PARSE_WEBSITE_PRICE);
@@ -322,9 +379,13 @@ contract SentimentOracle {
     receive() external payable {}
 
     // Internal
-    function _computeDeposit(uint256 pricePerAgent) internal view returns (uint256) {
-        return platform.getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE)
-             + pricePerAgent * SUBCOMMITTEE_SIZE;
+    function _computeDeposit(
+        uint256 pricePerAgent
+    ) internal view returns (uint256) {
+        return
+            platform.getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE) +
+            pricePerAgent *
+            SUBCOMMITTEE_SIZE;
     }
 
     // Events for request tracking
@@ -357,10 +418,15 @@ interface IAgentRequester {
 
     function getRequestDeposit() external view returns (uint256);
 
-    function getAdvancedRequestDeposit(uint256 subcommitteeSize) external view returns (uint256);
+    function getAdvancedRequestDeposit(
+        uint256 subcommitteeSize
+    ) external view returns (uint256);
 }
 
-enum ConsensusType { Majority, Threshold }
+enum ConsensusType {
+    Majority,
+    Threshold
+}
 
 struct Response {
     address validator;
@@ -388,13 +454,22 @@ struct Request {
     uint256 perAgentBudget;
 }
 
-enum ResponseStatus { None, Pending, Success, Failed, TimedOut }
+enum ResponseStatus {
+    None,
+    Pending,
+    Success,
+    Failed,
+    TimedOut
+}
 
 // ============ JSON API Agent Interface ============
 
 interface IJsonApiAgent {
-    function fetchUint(string calldata url, string calldata selector, uint8 decimals)
-        external returns (uint256);
+    function fetchUint(
+        string calldata url,
+        string calldata selector,
+        uint8 decimals
+    ) external returns (uint256);
 }
 
 // ============ LLM Inference Agent Interface ============

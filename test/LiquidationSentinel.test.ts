@@ -1,45 +1,50 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { LiquidationSentinel, MarginVault, OrderBook } from "../typechain-types";
+import { LiquidationSentinel, MarginVault, OrderBook, MockUSDC } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("LiquidationSentinel", function () {
   let sentinel: LiquidationSentinel;
   let marginVault: MarginVault;
   let orderBook: OrderBook;
+  let mockUSDC: MockUSDC;
   let owner: HardhatEthersSigner;
   let trader1: HardhatEthersSigner;
 
   const PRICE_SCALE = 10n ** 8n;
-  const SIZE_SCALE = 10n ** 18n;
 
   beforeEach(async function () {
     [owner, trader1] = await ethers.getSigners();
 
+    const MockUSDC = await ethers.getContractFactory("MockUSDC");
+    mockUSDC = await MockUSDC.deploy();
+    await mockUSDC.waitForDeployment();
+    const usdcAddr = await mockUSDC.getAddress();
+
     const MarginVaultFactory = await ethers.getContractFactory("MarginVault");
-    marginVault = await MarginVaultFactory.deploy();
+    marginVault = await MarginVaultFactory.deploy(usdcAddr);
     await marginVault.waitForDeployment();
+    const vaultAddr = await marginVault.getAddress();
+
+    const PerpEngineFactory = await ethers.getContractFactory("PerpEngine");
+    const perpEngine = await PerpEngineFactory.deploy(vaultAddr);
+    await perpEngine.waitForDeployment();
 
     const OrderBookFactory = await ethers.getContractFactory("OrderBook");
-    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
+    orderBook = await OrderBookFactory.deploy(vaultAddr, await perpEngine.getAddress(), ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
     await orderBook.waitForDeployment();
 
     const SentinelFactory = await ethers.getContractFactory("LiquidationSentinel");
-    sentinel = await SentinelFactory.deploy(await marginVault.getAddress());
+    sentinel = await SentinelFactory.deploy(vaultAddr);
     await sentinel.waitForDeployment();
 
-    // Wire permissions
     await marginVault.setAuthorized(await orderBook.getAddress(), true);
     await marginVault.setAuthorized(await sentinel.getAddress(), true);
   });
 
   describe("checkAllPositions", function () {
     it("should update PnL for all positions", async function () {
-      // This test verifies the sentinel can call updateAllPnL
-      // Full liquidation test requires a position to be opened first
       const currentPrice = 50000n * PRICE_SCALE;
-
-      // Should not revert
       await sentinel.checkAllPositions(currentPrice);
     });
   });
@@ -63,8 +68,6 @@ describe("LiquidationSentinel", function () {
 
   describe("liquidatePosition", function () {
     it("should only liquidate unhealthy positions", async function () {
-      // Without an open position, marginHealth returns type(uint256).max
-      // which is > MAINTENANCE_MARGIN_RATIO, so should revert
       await expect(
         sentinel.liquidatePosition(await trader1.getAddress())
       ).to.be.reverted;

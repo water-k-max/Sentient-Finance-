@@ -1,16 +1,15 @@
 import { ethers } from "hardhat";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
-  const REGISTRY = "0xAb3b04A51f052c817969EF28DeF409FAF9544756";
-  const AGENT_INTERFACE = "0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499";
   const ASSET = ethers.keccak256(ethers.toUtf8Bytes("BTC-USD"));
 
   console.log("Redeploying SomniaPriceOracle (fixed event layout)...\n");
 
   // Deploy new SomniaPriceOracle
   const Oracle = await ethers.getContractFactory("SomniaPriceOracle");
-  const oracle = await Oracle.deploy(REGISTRY);
+  const oracle = await Oracle.deploy(CONTRACT_ADDRESSES.keeperRegistry);
   await oracle.waitForDeployment();
   console.log(`✅ SomniaPriceOracle: ${await oracle.getAddress()}`);
 
@@ -22,7 +21,7 @@ async function main() {
 
   // Subscribe AgentInterface to SomniaPriceOracle PriceUpdated events
   const AgentInterface = await ethers.getContractFactory("AgentInterface");
-  const ai = AgentInterface.attach(AGENT_INTERFACE);
+  const ai = AgentInterface.attach(CONTRACT_ADDRESSES.agentInterface);
   const PRICE_UPDATED_TOPIC = await ai.PRICE_UPDATED_TOPIC();
   await ai.subscribe(await oracle.getAddress(), PRICE_UPDATED_TOPIC);
   console.log("✅ AgentInterface subscribed to SomniaPriceOracle");

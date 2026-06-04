@@ -9,18 +9,20 @@ Sentient Finance is a fully on-chain perpetual swap matching engine that uses So
 ```
                     PerpEngine.sol
                    (coordinator)
-                    /    |    \
-                   /     |     \
-          OrderBook.sol  |  OracleAdapter.sol
-               /         |       \
-              /          |        \
-        MarginVault.sol ←─┘     MockPriceFeed.sol
-              /    \
-             /      \
-  LiquidationSentinel  AgentInterface.sol
-                           /    \
-                          /      \
-               LiquidityProviderAgent  (Somnia Reactive Layer)
+                     /    |    \
+                    /     |     \
+           OrderBook.sol  |  OracleAdapter.sol
+                /         |       \
+               /          |        \
+         MarginVault.sol ←─┘     MockPriceFeed.sol
+               |    \               \
+               |     \            MockUSDC.sol
+               |      \          (collateral)
+               |       \
+   LiquidationSentinel  AgentInterface.sol
+                            /    \
+                           /      \
+                LiquidityProviderAgent  (Somnia Reactive Layer)
 ```
 
 ## Data Flow

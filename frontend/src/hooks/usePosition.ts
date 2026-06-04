@@ -60,7 +60,7 @@ export function usePosition(
         setPosition({
           isLong: pos.isLong,
           entryPrice: Number(pos.entryPrice) / PRICE_SCALE,
-          size: Number(pos.size) / 1e18,
+          size: Number(pos.size) / 1e6,
           margin: Number(pos.margin) / 1e6,
           leverage: Number(pos.leverage),
           unrealizedPnl: Number(pos.unrealizedPnl) / 1e6,

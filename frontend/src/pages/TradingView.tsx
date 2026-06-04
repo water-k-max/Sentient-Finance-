@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react";
-import { ethers } from "ethers";
+import { useState, useEffect, useCallback } from "react";
 import OrderBook from "../components/OrderBook";
 import TradeForm from "../components/TradeForm";
 import PositionsPanel from "../components/PositionsPanel";
@@ -10,159 +9,86 @@ import { useOrderBook } from "../hooks/useOrderBook";
 import { usePosition } from "../hooks/usePosition";
 import { useEventFeed } from "../hooks/useEventFeed";
 import { isDeployed as checkDeployed } from "../config/addresses";
-import { getPerpEngineWithSigner, pairToBytes32 } from "../lib/contracts";
 import { useOraclePrice } from "../hooks/useOraclePrice";
 import { getPriceHistory, addPricePoint, subscribeToPriceHistory } from "../lib/priceHistory";
+import { useTrade } from "../hooks/useTrade";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
 
-const PAIR_CONFIG: Record<TradingPair, { midPrice: number; symbol: string; step: number; vol: number }> = {
-  "BTC-USD": { midPrice: 50000, symbol: "BTC", step: 50, vol: 200 },
-  "ETH-USD": { midPrice: 3000, symbol: "ETH", step: 5, vol: 15 },
-  "SOL-USD": { midPrice: 150, symbol: "SOL", step: 0.5, vol: 1 },
+const PAIR_SYMBOLS: Record<TradingPair, string> = {
+  "BTC-USD": "BTC",
+  "ETH-USD": "ETH",
+  "SOL-USD": "SOL",
 };
 
 export default function TradingView() {
   const [pair, setPair] = useState<TradingPair>("BTC-USD");
-  const config = PAIR_CONFIG[pair];
+  const symbol = PAIR_SYMBOLS[pair];
 
-  // Live hooks (fall back to mock when not deployed)
   const liveOrderBook = useOrderBook(pair);
   const { address, signer, connected } = useWallet();
   const livePosition = usePosition(address);
-  const liveEvents = useEventFeed();
-  const isDeployed = checkDeployed();  // contracts exist on testnet
-  const isLive = isDeployed && connected;  // wallet connected + deployed
-  const oraclePrice = useOraclePrice(pair, 1500); // poll every 1.5s
-
-  // Transaction status
+  const liveEvents = useEventFeed(pair);
+  const isDeployed = checkDeployed();
+  const isLive = isDeployed && connected;
+  const oraclePrice = useOraclePrice(pair, 1500);
   const [txStatus, setTxStatus] = useState<string | null>(null);
+  const { executeTrade, executeClosePosition } = useTrade();
 
-  // Mock data for pre-deployment
-  const [mockBids, setMockBids] = useState<Array<{ price: number; size: number }>>([]);
-  const [mockAsks, setMockAsks] = useState<Array<{ price: number; size: number }>>([]);
-  const [mockEvents, setMockEvents] = useState<string[]>([]);
   const [priceHistory, setPriceHistory] = useState<number[]>(getPriceHistory);
 
-  // Subscribe to persistent price store (survives tab switches)
   useEffect(() => {
     setPriceHistory(getPriceHistory());
     return subscribeToPriceHistory(() => setPriceHistory([...getPriceHistory()]));
   }, []);
 
-  // Append oracle price to persistent store
   useEffect(() => {
     if (oraclePrice) {
       addPricePoint(oraclePrice);
     }
   }, [oraclePrice]);
 
-  // Reinitialize mock data when pair changes (only used when not deployed)
-  useEffect(() => {
-    if (isLive) return; // Skip mock data when live
-
-    const { midPrice, step, vol } = config;
-    const initialBids = Array.from({ length: 12 }, (_, i) => ({
-      price: midPrice - (i + 1) * step,
-      size: parseFloat((Math.random() * 2 + 0.1).toFixed(4)),
-    }));
-    const initialAsks = Array.from({ length: 12 }, (_, i) => ({
-      price: midPrice + (i + 1) * step,
-      size: parseFloat((Math.random() * 2 + 0.1).toFixed(4)),
-    }));
-    setMockBids(initialBids);
-    setMockAsks(initialAsks);
-
-    const history = Array.from({ length: 50 }, (_, i) =>
-      midPrice + Math.sin(i * 0.2) * vol + (Math.random() - 0.5) * vol / 2
-    );
-    setPriceHistory(history);
-
-    setMockEvents([
-      `LP Agent placed bid at $${(midPrice - step).toLocaleString()} | 1.0000 ${config.symbol}`,
-      `LP Agent placed ask at $${(midPrice + step).toLocaleString()} | 1.0000 ${config.symbol}`,
-      `Order matched: 0.5000 ${config.symbol} @ $${midPrice.toLocaleString()}`,
-      `Sentinel monitoring 3 open ${config.symbol} positions`,
-    ]);
-  }, [pair, config, isLive]);
-
-  useEffect(() => {
-    if (isLive) return; // Skip mock updates when live
-
-    const interval = setInterval(() => {
-      const { step: _step } = config;
-      setMockBids((prev) =>
-        prev.map((b) => ({
-          ...b,
-          size: parseFloat(Math.max(0.05, b.size + (Math.random() - 0.5) * 0.3).toFixed(4)),
-        }))
-      );
-      setMockAsks((prev) =>
-        prev.map((a) => ({
-          ...a,
-          size: parseFloat(Math.max(0.05, a.size + (Math.random() - 0.5) * 0.3).toFixed(4)),
-        }))
-      );
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [pair, config, isLive]);
-
-  // Use live or mock data — public reads use isDeployed (RPC, no wallet needed)
-  // Only TradeForm + Positions need the wallet
-  const bids = isDeployed
-    ? liveOrderBook.bids.map((b) => ({ price: b.price, size: b.size }))
-    : mockBids;
-  const asks = isDeployed
-    ? liveOrderBook.asks.map((a) => ({ price: a.price, size: a.size }))
-    : mockAsks;
-  const events = isDeployed
-    ? liveEvents.map((e) => e.message)
-    : mockEvents;
-
-  const handleTrade = async (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
+  const handleTrade = useCallback(async (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
     if (!isLive || !signer) {
-      const event = `${type === "buy" ? "Buy" : "Sell"} order placed: ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x`;
-      setMockEvents((prev) => [event, ...prev]);
+      setTxStatus("failed");
+      setTimeout(() => setTxStatus(null), 3000);
       return;
     }
 
-    // Live transaction
+    setTxStatus("pending");
     try {
-      setTxStatus("pending");
-      const perpEngine = getPerpEngineWithSigner(signer);
-      const pairId = pairToBytes32(pair);
-      const isLong = type === "buy";
-      const sizeWei = ethers.parseUnits(size.toString(), 18);
-      const limitPriceWei = price ? BigInt(Math.floor(price * 1e8)) : 0n;
-
-      const tx = await perpEngine.openPosition(
-        pairId,
-        isLong,
-        sizeWei,
-        leverage,
-        limitPriceWei
-      );
-
-      setTxStatus("confirming");
-      await tx.wait();
-
-      setTxStatus("confirmed");
-      setTimeout(() => setTxStatus(null), 3000);
-
-      const event = `${type === "buy" ? "Buy" : "Sell"} ${size.toFixed(4)} ${config.symbol} @ ${price ? `$${price.toLocaleString()}` : "market"} | ${leverage}x — ✅ Confirmed`;
-      setMockEvents((prev) => [event, ...prev]);
-    } catch (e: any) {
-      console.error("Trade failed:", e);
+      const result = await executeTrade(signer, pair, type, size, leverage, price);
+      if (result.success) {
+        setTxStatus("confirmed");
+        setTimeout(() => setTxStatus(null), 3000);
+      } else {
+        setTxStatus("failed");
+        setTimeout(() => setTxStatus(null), 5000);
+      }
+    } catch {
       setTxStatus("failed");
       setTimeout(() => setTxStatus(null), 5000);
-      const event = `❌ Trade failed: ${e?.reason || e?.message || "unknown error"}`;
-      setMockEvents((prev) => [event, ...prev]);
     }
+  }, [isLive, signer, pair, executeTrade]);
+
+  if (!isDeployed) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-7rem)] text-gray-500">
+        <div className="text-center space-y-4">
+          <div className="text-4xl font-heading text-cyan glow-text">SENTIENT FINANCE</div>
+          <div className="text-sm">Connect wallet to view live data</div>
+        </div>
+      </div>
+    );
+  }
+
+  const handleClosePosition = async () => {
+    if (!signer) return;
+    await executeClosePosition(signer, pair);
   };
 
   return (
     <div className="grid grid-cols-12 gap-0 h-[calc(100vh-7rem)]">
-      {/* Left: Order Book */}
       <div className="col-span-3 border-r border-border flex flex-col">
         <div className="px-4 py-2 border-b border-border flex items-center justify-between">
           <span className="text-sm text-gray-400 font-heading">ORDER BOOK</span>
@@ -176,36 +102,36 @@ export default function TradingView() {
             <option value="SOL-USD">SOL-USD</option>
           </select>
         </div>
-        {isDeployed && liveOrderBook.loading ? (
+        {liveOrderBook.loading ? (
           <div className="flex-1 flex items-center justify-center text-gray-600 text-sm">Loading...</div>
         ) : (
-          <OrderBook bids={bids} asks={asks} />
+          <OrderBook bids={liveOrderBook.bids} asks={liveOrderBook.asks} />
         )}
       </div>
 
-      {/* Center: Chart + Trade Form */}
       <div className="col-span-6 flex flex-col">
         <div className="flex-1 border-b border-border">
           <PriceChart data={priceHistory} pair={pair} />
         </div>
         <div className="p-4">
-          <TradeForm onTrade={handleTrade} symbol={config.symbol} isLive={isLive} txStatus={txStatus} oraclePrice={oraclePrice ?? 0} />
+          <TradeForm onTrade={handleTrade} symbol={symbol} isLive={isLive} txStatus={txStatus} oraclePrice={oraclePrice ?? 0} />
         </div>
       </div>
 
-      {/* Right: Positions + Events */}
       <div className="col-span-3 flex flex-col">
         <div className="border-b border-border">
           <PositionsPanel
-            symbol={config.symbol}
-            position={isLive && livePosition ? livePosition : undefined}
+            symbol={symbol}
+            position={livePosition ?? undefined}
+            markPrice={oraclePrice ?? undefined}
+            onClosePosition={handleClosePosition}
           />
         </div>
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="px-4 py-2 border-b border-border text-sm text-gray-400 font-heading">
-            AGENT ACTIVITY {isDeployed && <span className="text-green ml-2">● LIVE</span>}
+            AGENT ACTIVITY <span className="text-green ml-2">● LIVE</span>
           </div>
-          <EventFeed events={events} />
+          <EventFeed events={liveEvents.map(e => e.message)} />
         </div>
       </div>
     </div>

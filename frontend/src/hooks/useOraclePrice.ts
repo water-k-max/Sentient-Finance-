@@ -8,24 +8,26 @@ const PERP_ENGINE_ABI = [
   "function totalVolume() view returns (uint256)",
 ];
 
-export function useOraclePrice(pair: string, pollInterval = 3000): number | null {
+export function useOraclePrice(_pair: string, pollInterval = 3000): number | null {
   const [price, setPrice] = useState<number | null>(null);
 
   useEffect(() => {
-    const oracleAddr = CONTRACT_ADDRESSES.compositeOracle;
-    if (!oracleAddr || oracleAddr === ethers.ZeroAddress) return;
+    // Read from OracleAdapter (the demo price trigger path):
+    // updatePrice.ts → MockPriceFeed → OracleAdapter.updatePriceDirect() → PriceUpdated
+    const addr = CONTRACT_ADDRESSES.oracleAdapter;
+    if (!addr || addr === ethers.ZeroAddress) return;
 
     let cancelled = false;
     const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
-    const oracle = new ethers.Contract(oracleAddr, [
-      "function getLastPrice() view returns (uint256 price, uint256 timestamp)",
+    const oracle = new ethers.Contract(addr, [
+      "function latestPrice() view returns (uint256)",
     ], provider);
 
     const fetch = async () => {
       try {
-        const [raw] = await oracle.getLastPrice();
+        const raw: bigint = await oracle.latestPrice();
         if (cancelled) return;
-        if (raw > 0n) setPrice(Number(raw) / 1e18);
+        if (raw > 0n) setPrice(Number(raw) / 1e8);
       } catch (e) {
         // silent
       }
@@ -34,7 +36,7 @@ export function useOraclePrice(pair: string, pollInterval = 3000): number | null
     fetch();
     const interval = setInterval(fetch, pollInterval);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [pair, pollInterval]);
+  }, [_pair, pollInterval]);
 
   return price;
 }

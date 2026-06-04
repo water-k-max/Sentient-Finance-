@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
-interface FeedEvent {
+export interface FeedEvent {
   timestamp: Date;
   message: string;
   type: "match" | "liquidation" | "rebalance" | "order";
@@ -24,19 +24,12 @@ const LP_AGENT_ABI = [
 const PRICE_SCALE = 1e8;
 const SIZE_SCALE = 1e18;
 
-const DEMO_EVENTS: FeedEvent[] = [
-  { timestamp: new Date(), message: "LP Agent placed bid at $49,950 | 1.0000 BTC", type: "order" },
-  { timestamp: new Date(), message: "LP Agent placed ask at $50,050 | 1.0000 BTC", type: "order" },
-  { timestamp: new Date(), message: "Order matched: 0.5000 BTC @ $50,000", type: "match" },
-  { timestamp: new Date(), message: "Sentinel monitoring 3 open positions", type: "liquidation" },
-];
-
-export function useEventFeed(maxEvents = 50): FeedEvent[] {
-  const [events, setEvents] = useState<FeedEvent[]>(DEMO_EVENTS);
+export function useEventFeed(pair = "BTC-USD", maxEvents = 50): FeedEvent[] {
+  const [events, setEvents] = useState<FeedEvent[]>([]);
   const lastBlockRef = useRef<number>(0);
 
   useEffect(() => {
-    const orderBookAddr = CONTRACT_ADDRESSES.orderBooks["BTC-USD"];
+    const orderBookAddr = CONTRACT_ADDRESSES.orderBooks[pair as keyof typeof CONTRACT_ADDRESSES.orderBooks];
     const vaultAddr = CONTRACT_ADDRESSES.marginVault;
     const lpAddr = CONTRACT_ADDRESSES.liquidityProviderAgent;
 
@@ -137,7 +130,7 @@ export function useEventFeed(maxEvents = 50): FeedEvent[] {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [pair]);
 
   return events;
 }

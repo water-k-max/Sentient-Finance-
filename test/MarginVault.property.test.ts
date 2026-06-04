@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { MarginVault } from "../typechain-types";
+import { MarginVault, MockUSDC } from "../typechain-types";
 import fc from "fast-check";
 
 describe("MarginVault — Property-Based Tests", function () {
@@ -8,8 +8,11 @@ describe("MarginVault — Property-Based Tests", function () {
   const PRICE_SCALE = 10n ** 8n;
 
   beforeEach(async function () {
+    const MockUSDC = await ethers.getContractFactory("MockUSDC");
+    const musdc = await MockUSDC.deploy();
+    await musdc.waitForDeployment();
     const MarginVaultFactory = await ethers.getContractFactory("MarginVault");
-    marginVault = await MarginVaultFactory.deploy();
+    marginVault = await MarginVaultFactory.deploy(await musdc.getAddress());
     await marginVault.waitForDeployment();
   });
 

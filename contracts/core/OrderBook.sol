@@ -11,9 +11,7 @@ interface IPerpEngine {
 
 /// @title OrderBook — On-chain perpetual swap order book with native matching
 contract OrderBook is IOrderBook {
-    // ============ State ============
 
-    // Cap matches per call to prevent runaway gas consumption
     uint256 public constant MAX_MATCHES_PER_CALL = 10;
 
     mapping(uint256 => Order) public orders;
@@ -22,9 +20,9 @@ contract OrderBook is IOrderBook {
     uint256 public override nextOrderId;
 
     IMarginVault public marginVault;
-    IPerpEngine public perpEngine;
-    bytes32 public pairId;
-    address public owner;
+    IPerpEngine  public perpEngine;
+    bytes32      public pairId;
+    address      public owner;
 
     modifier onlyOwner() {
         require(msg.sender == owner, "OrderBook: not owner");
@@ -33,9 +31,9 @@ contract OrderBook is IOrderBook {
 
     constructor(address _marginVault, address _perpEngine, bytes32 _pairId) {
         marginVault = IMarginVault(_marginVault);
-        perpEngine = IPerpEngine(_perpEngine);
-        pairId = _pairId;
-        owner = msg.sender;
+        perpEngine  = IPerpEngine(_perpEngine);
+        pairId      = _pairId;
+        owner       = msg.sender;
     }
 
     // ============ External Functions ============
@@ -47,32 +45,43 @@ contract OrderBook is IOrderBook {
         uint256 size,
         uint256 leverage
     ) external returns (uint256 orderId) {
-        require(price > 0, "OrderBook: price must be > 0");
-        require(size > 0, "OrderBook: size must be > 0");
-        require(leverage >= 1 && leverage <= 100, "OrderBook: invalid leverage");
+        require(price > 0,                         "OrderBook: price must be > 0");
+        require(size > 0,                          "OrderBook: size must be > 0");
+        require(leverage >= 1 && leverage <= 100,  "OrderBook: invalid leverage");
 
-        // Calculate required margin: size / leverage (simplified)
-        uint256 notional = (size * price) / 1e18;
-        uint256 requiredMargin = notional / leverage;
+        // ── Margin calculation ─────────────────────────────────────────────────
+        // size  is USDC notional in 6-decimal units  (e.g. 100 USDC = 100_000_000)
+        // price is in 8-decimal units                (e.g. $62,000 = 6_200_000_000_000)
+        //
+        // We want: requiredMargin (6-dec USDC) = notional / leverage
+        // notional = size (already in USDC 6-dec) — size IS the notional for a
+        // USDC-margined perp where 1 contract = 1 USDC notional.
+        // So: requiredMargin = size / leverage
+        //
+        // The old formula  (size * price) / 1e18  was written for SIZE_SCALE=1e18
+        // contracts. With size in USDC 6-dec it produces ~0 and then a tiny lock
+        // that allows entry, but when settlePosition calls _openPosition the same
+        // formula produces a margin that doesn't match collateralBalances units,
+        // causing the second _openPosition call (short side of self-match) to fail.
+        uint256 requiredMargin = size / leverage;
         require(requiredMargin > 0, "OrderBook: margin too small");
 
-        // Lock margin via vault
+        // Lock margin in vault before inserting order
         marginVault.lockMargin(msg.sender, requiredMargin);
 
         orderId = nextOrderId++;
         orders[orderId] = Order({
-            id: orderId,
-            trader: msg.sender,
-            isBid: isBid,
-            price: price,
-            size: size,
-            margin: requiredMargin,
-            leverage: leverage,
+            id:        orderId,
+            trader:    msg.sender,
+            isBid:     isBid,
+            price:     price,
+            size:      size,
+            margin:    requiredMargin,
+            leverage:  leverage,
             timestamp: block.timestamp,
-            status: OrderStatus.OPEN
+            status:    OrderStatus.OPEN
         });
 
-        // Insert into appropriate heap
         if (isBid) {
             _insertBid(orderId);
         } else {
@@ -81,26 +90,57 @@ contract OrderBook is IOrderBook {
 
         emit OrderPlaced(orderId, msg.sender, isBid, price, size);
 
-        // Attempt to match immediately
         _attemptMatch();
     }
 
-    /// @notice Cancel an open order
+    /// @notice Cancel an open order and release locked margin
     function cancelOrder(uint256 orderId) external {
         Order storage order = orders[orderId];
-        require(order.status == OrderStatus.OPEN || order.status == OrderStatus.PARTIALLY_FILLED,
-            "OrderBook: order not cancellable");
+        require(
+            order.status == OrderStatus.OPEN || order.status == OrderStatus.PARTIALLY_FILLED,
+            "OrderBook: order not cancellable"
+        );
         require(order.trader == msg.sender, "OrderBook: not your order");
 
         order.status = OrderStatus.CANCELLED;
-
-        // Remove from heap
         _removeFromHeap(orderId, order.isBid);
-
-        // Release remaining margin
         marginVault.releaseMargin(msg.sender, order.margin);
 
         emit OrderCancelled(orderId);
+    }
+
+    /// @notice Admin function to clear all stale orders from both heaps.
+    ///         Releases locked margin back to each trader.
+    ///         Use this before re-seeding a book that has orders from a previous run.
+    function adminClearBook() external onlyOwner {
+        // Clear bid heap — release margin for each open order
+        while (bidHeap.length > 0) {
+            uint256 oid   = bidHeap[0];
+            Order storage o = orders[oid];
+            if (o.status == OrderStatus.OPEN || o.status == OrderStatus.PARTIALLY_FILLED) {
+                o.status = OrderStatus.CANCELLED;
+                // Release margin back to trader
+                try marginVault.releaseMargin(o.trader, o.margin) {} catch {}
+            }
+            bidHeap[0] = bidHeap[bidHeap.length - 1];
+            bidHeap.pop();
+            if (bidHeap.length > 0) _siftDownBid(0);
+        }
+
+        // Clear ask heap
+        while (askHeap.length > 0) {
+            uint256 oid   = askHeap[0];
+            Order storage o = orders[oid];
+            if (o.status == OrderStatus.OPEN || o.status == OrderStatus.PARTIALLY_FILLED) {
+                o.status = OrderStatus.CANCELLED;
+                try marginVault.releaseMargin(o.trader, o.margin) {} catch {}
+            }
+            askHeap[0] = askHeap[askHeap.length - 1];
+            askHeap.pop();
+            if (askHeap.length > 0) _siftDownAsk(0);
+        }
+
+        emit BookCleared(block.timestamp);
     }
 
     /// @notice Public entry point for reactive matching
@@ -134,20 +174,19 @@ contract OrderBook is IOrderBook {
         uint256 askCount = askHeap.length < levels ? askHeap.length : levels;
 
         bidPrices = new uint256[](bidCount);
-        bidSizes = new uint256[](bidCount);
+        bidSizes  = new uint256[](bidCount);
         askPrices = new uint256[](askCount);
-        askSizes = new uint256[](askCount);
+        askSizes  = new uint256[](askCount);
 
         for (uint256 i = 0; i < bidCount; i++) {
             Order memory o = orders[bidHeap[i]];
-            bidPrices[i] = o.price;
-            bidSizes[i] = o.size;
+            bidPrices[i]   = o.price;
+            bidSizes[i]    = o.size;
         }
-
         for (uint256 i = 0; i < askCount; i++) {
             Order memory o = orders[askHeap[i]];
-            askPrices[i] = o.price;
-            askSizes[i] = o.size;
+            askPrices[i]   = o.price;
+            askSizes[i]    = o.size;
         }
     }
 
@@ -157,31 +196,48 @@ contract OrderBook is IOrderBook {
 
     // ============ Internal Matching Logic ============
 
-    /// @notice Attempt to match crossing orders — capped at MAX_MATCHES_PER_CALL
     function _attemptMatch() internal {
         uint256 matchCount = 0;
-        while (bidHeap.length > 0 && askHeap.length > 0 && matchCount < MAX_MATCHES_PER_CALL) {
+
+        while (
+            bidHeap.length > 0 &&
+            askHeap.length > 0 &&
+            matchCount < MAX_MATCHES_PER_CALL
+        ) {
             uint256 bidId = bidHeap[0];
             uint256 askId = askHeap[0];
 
             Order storage bid = orders[bidId];
             Order storage ask = orders[askId];
 
-            // Check if bid >= ask (crossing)
+            // Price must cross
             if (bid.price < ask.price) break;
 
-            // Fill price is the older order's price (price-time priority)
-            uint256 fillPrice;
-            if (bid.timestamp <= ask.timestamp) {
-                fillPrice = bid.price;
-            } else {
-                fillPrice = ask.price;
+            // ── Self-match guard ───────────────────────────────────────────────
+            // Same trader on both sides would call settlePosition(trader, trader)
+            // which opens a long and short for the same address in sequence.
+            // The second _openPosition overwrites the first and the free margin
+            // check fails. Skip the ask and look for a different counterparty.
+            if (bid.trader == ask.trader) {
+                // Pop the ask temporarily and try the next one
+                // If no other ask exists or none cross, break out
+                if (askHeap.length <= 1) break;
+                // Swap best ask to back and check second-best
+                (askHeap[0], askHeap[askHeap.length - 1]) = (askHeap[askHeap.length - 1], askHeap[0]);
+                _siftDownAsk(0);
+                // Check if new best ask still crosses
+                if (orders[askHeap[0]].price > bid.price) {
+                    // Restore — nothing crosses without self-match, stop
+                    // Re-heapify will correct itself on next insert
+                    break;
+                }
+                continue;
             }
 
-            // Determine fill size
-            uint256 fillSize = bid.size < ask.size ? bid.size : ask.size;
+            // Fill price: older order has priority
+            uint256 fillPrice = bid.timestamp <= ask.timestamp ? bid.price : ask.price;
+            uint256 fillSize  = bid.size < ask.size ? bid.size : ask.size;
 
-            // Update orders
             bid.size -= fillSize;
             ask.size -= fillSize;
 
@@ -199,11 +255,21 @@ contract OrderBook is IOrderBook {
                 ask.status = OrderStatus.PARTIALLY_FILLED;
             }
 
-            // Settle positions via MarginVault
-            // Bid = long (buying), Ask = short (selling)
-            marginVault.settlePosition(bid.trader, ask.trader, fillPrice, fillSize, bid.leverage, ask.leverage);
+            // Release locked margin for the filled portion before settlePosition
+            // re-locks it via _openPosition. This prevents double-deduction:
+            //   lockMargin (placeOrder) + _openPosition (settlePosition).
+            uint256 bidFilledMargin = fillSize / bid.leverage;
+            uint256 askFilledMargin = fillSize / ask.leverage;
+            if (bidFilledMargin > 0) marginVault.releaseMargin(bid.trader, bidFilledMargin);
+            if (askFilledMargin > 0) marginVault.releaseMargin(ask.trader, askFilledMargin);
 
-            // Record fill for mark price computation in PerpEngine
+            // Settle: bid=long, ask=short
+            marginVault.settlePosition(
+                bid.trader, ask.trader,
+                fillPrice, fillSize,
+                bid.leverage, ask.leverage
+            );
+
             if (address(perpEngine) != address(0)) {
                 perpEngine.recordFill(pairId, fillPrice, fillSize);
             }
@@ -215,45 +281,36 @@ contract OrderBook is IOrderBook {
 
     // ============ Heap Operations ============
 
-    /// @notice Insert order ID into max-heap (bids: highest price first)
     function _insertBid(uint256 orderId) internal {
         bidHeap.push(orderId);
         _siftUpBid(bidHeap.length - 1);
     }
 
-    /// @notice Insert order ID into min-heap (asks: lowest price first)
     function _insertAsk(uint256 orderId) internal {
         askHeap.push(orderId);
         _siftUpAsk(askHeap.length - 1);
     }
 
-    /// @notice Sift up for max-heap (bids)
     function _siftUpBid(uint256 idx) internal {
         while (idx > 0) {
             uint256 parent = (idx - 1) / 2;
             if (orders[bidHeap[idx]].price > orders[bidHeap[parent]].price) {
                 (bidHeap[idx], bidHeap[parent]) = (bidHeap[parent], bidHeap[idx]);
                 idx = parent;
-            } else {
-                break;
-            }
+            } else break;
         }
     }
 
-    /// @notice Sift up for min-heap (asks)
     function _siftUpAsk(uint256 idx) internal {
         while (idx > 0) {
             uint256 parent = (idx - 1) / 2;
             if (orders[askHeap[idx]].price < orders[askHeap[parent]].price) {
                 (askHeap[idx], askHeap[parent]) = (askHeap[parent], askHeap[idx]);
                 idx = parent;
-            } else {
-                break;
-            }
+            } else break;
         }
     }
 
-    /// @notice Remove best bid and re-heapify
     function _removeBestBid() internal {
         if (bidHeap.length == 0) return;
         bidHeap[0] = bidHeap[bidHeap.length - 1];
@@ -261,7 +318,6 @@ contract OrderBook is IOrderBook {
         if (bidHeap.length > 0) _siftDownBid(0);
     }
 
-    /// @notice Remove best ask and re-heapify
     function _removeBestAsk() internal {
         if (askHeap.length == 0) return;
         askHeap[0] = askHeap[askHeap.length - 1];
@@ -269,57 +325,41 @@ contract OrderBook is IOrderBook {
         if (askHeap.length > 0) _siftDownAsk(0);
     }
 
-    /// @notice Sift down for max-heap (bids)
     function _siftDownBid(uint256 idx) internal {
         uint256 length = bidHeap.length;
         while (true) {
             uint256 largest = idx;
-            uint256 left = 2 * idx + 1;
-            uint256 right = 2 * idx + 2;
-
-            if (left < length && orders[bidHeap[left]].price > orders[bidHeap[largest]].price) {
-                largest = left;
-            }
-            if (right < length && orders[bidHeap[right]].price > orders[bidHeap[largest]].price) {
-                largest = right;
-            }
+            uint256 left    = 2 * idx + 1;
+            uint256 right   = 2 * idx + 2;
+            if (left  < length && orders[bidHeap[left]].price  > orders[bidHeap[largest]].price) largest = left;
+            if (right < length && orders[bidHeap[right]].price > orders[bidHeap[largest]].price) largest = right;
             if (largest == idx) break;
             (bidHeap[idx], bidHeap[largest]) = (bidHeap[largest], bidHeap[idx]);
             idx = largest;
         }
     }
 
-    /// @notice Sift down for min-heap (asks)
     function _siftDownAsk(uint256 idx) internal {
         uint256 length = askHeap.length;
         while (true) {
             uint256 smallest = idx;
-            uint256 left = 2 * idx + 1;
-            uint256 right = 2 * idx + 2;
-
-            if (left < length && orders[askHeap[left]].price < orders[askHeap[smallest]].price) {
-                smallest = left;
-            }
-            if (right < length && orders[askHeap[right]].price < orders[askHeap[smallest]].price) {
-                smallest = right;
-            }
+            uint256 left     = 2 * idx + 1;
+            uint256 right    = 2 * idx + 2;
+            if (left  < length && orders[askHeap[left]].price  < orders[askHeap[smallest]].price) smallest = left;
+            if (right < length && orders[askHeap[right]].price < orders[askHeap[smallest]].price) smallest = right;
             if (smallest == idx) break;
             (askHeap[idx], askHeap[smallest]) = (askHeap[smallest], askHeap[idx]);
             idx = smallest;
         }
     }
 
-    /// @notice Remove a specific order ID from the heap
     function _removeFromHeap(uint256 orderId, bool isBid) internal {
         if (isBid) {
             for (uint256 i = 0; i < bidHeap.length; i++) {
                 if (bidHeap[i] == orderId) {
                     bidHeap[i] = bidHeap[bidHeap.length - 1];
                     bidHeap.pop();
-                    if (i < bidHeap.length) {
-                        _siftDownBid(i);
-                        _siftUpBid(i);
-                    }
+                    if (i < bidHeap.length) { _siftDownBid(i); _siftUpBid(i); }
                     break;
                 }
             }
@@ -328,13 +368,13 @@ contract OrderBook is IOrderBook {
                 if (askHeap[i] == orderId) {
                     askHeap[i] = askHeap[askHeap.length - 1];
                     askHeap.pop();
-                    if (i < askHeap.length) {
-                        _siftDownAsk(i);
-                        _siftUpAsk(i);
-                    }
+                    if (i < askHeap.length) { _siftDownAsk(i); _siftUpAsk(i); }
                     break;
                 }
             }
         }
     }
+
+    // ============ Events ============
+    event BookCleared(uint256 timestamp);
 }

@@ -29,6 +29,7 @@ export default function PriceChart({ data, pair }: { data: number[]; pair?: stri
 
   const minPrice = Math.min(...data);
   const maxPrice = Math.max(...data);
+  const padding = (maxPrice - minPrice) * 0.05 || 1; // 5% padding, minimum 1
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload }: any) => {
@@ -74,7 +75,7 @@ export default function PriceChart({ data, pair }: { data: number[]; pair?: stri
             hide
           />
           <YAxis
-            domain={[minPrice - 50, maxPrice + 50]}
+            domain={[minPrice - padding, maxPrice + padding]}
             tick={{ fill: "#666", fontSize: 10, fontFamily: "IBM Plex Mono" }}
             tickFormatter={(v: number) => `$${v.toLocaleString()}`}
             width={70}

@@ -3,7 +3,7 @@
 > **A Fully On-Chain Reactive Perpetual Matching Engine for AI Agents**
 
 ![Trading Dashboard](https://img.shields.io/badge/Somnia-Agentathon-00E5FF?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-49%20passing-00E676?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-65%20passing-00E676?style=for-the-badge)
 ![Contracts](https://img.shields.io/badge/contracts-10%20deployed-00E5FF?style=for-the-badge)
 ![Multi-Pair](https://img.shields.io/badge/pairs-BTC%20%7C%20ETH%20%7C%20SOL-8B5CF6?style=for-the-badge)
 
@@ -78,6 +78,7 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 | `LiquidationSentinel.sol` | Autonomous liquidation agent | `checkAllPositions`, `liquidatePosition`, reverse-iterate trackedTraders |
 | `LiquidityProviderAgent.sol` | Autonomous market-making agent | `initialize`, `rebalance`, adaptive spread on volatility |
 | `MockPriceFeed.sol` | Admin-controlled price feed for testing | `updatePrice` |
+| `MockUSDC.sol` | 6-decimal USDC mock for collateral (OpenZeppelin ERC20) | `mint`, `approve`, `transfer` |
 
 ## Agent Design
 
@@ -135,7 +136,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env
 # Add your PRIVATE_KEY and SOMNIA_RPC_URL
 
-# 4. Run tests (49 passing)
+# 4. Run tests (65 passing)
 npx hardhat test
 
 # 5. Deploy to local Hardhat node
@@ -145,31 +146,40 @@ npx hardhat run scripts/deploy.ts --network localhost
 # 6. Deploy to Somnia testnet
 npx hardhat run scripts/deploy.ts --network somnia
 
-# 7. Seed order book (after deployment)
-npx hardhat run scripts/seedOrderBook.ts --network somnia -- <orderBookAddr> <marginVaultAddr>
+# 7. Full demo setup (deploy → seed → push price)
+npx hardhat run scripts/demoSetup.ts --network somnia
 
-# 8. Start frontend
-cd frontend && npm run dev
+# 8. Update price + LP agent rebalance (run anytime)
+npx hardhat run scripts/updatePrice.ts --network somnia
+
+# 9. Standalone liquidation demo
+npx hardhat run scripts/demoLiquidation.ts --network somnia
+
+# 10. Start frontend
+npm run dev --prefix frontend
 ```
 
 ## Testnet Contracts
 
 | Contract | Address | Explorer |
 |----------|---------|----------|
-| MockPriceFeed | `0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19` | [View](https://explorer.testnet.somnia.network/address/0xFBf1D7d9B1F94254aE1426B154eda465cFEabB19) |
-| OracleAdapter | `0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0` | [View](https://explorer.testnet.somnia.network/address/0x96c7879c149c7A1Ad18c5bb905ee297B1e79AAf0) |
-| MarginVault | `0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b` | [View](https://explorer.testnet.somnia.network/address/0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b) |
-| OrderBookFactory | `0x62991Cebaf011Ebdc7b6ABA3Eb5cA7e517dEAd15` | [View](https://explorer.testnet.somnia.network/address/0x62991Cebaf011Ebdc7b6ABA3Eb5cA7e517dEAd15) |
-| BTC-USD OrderBook | `TBD` | [View](#) |
-| ETH-USD OrderBook | `TBD` | [View](#) |
-| SOL-USD OrderBook | `TBD` | [View](#) |
-| PerpEngine | `0xaA6e6c28EceFAAbCDD71b4EBD8bAF20803fF6230` | [View](https://explorer.testnet.somnia.network/address/0xaA6e6c28EceFAAbCDD71b4EBD8bAF20803fF6230) |
-| LiquidationSentinel | `0x002b992AE8E4867310Fb487765F872dFE9e08b61` | [View](https://explorer.testnet.somnia.network/address/0x002b992AE8E4867310Fb487765F872dFE9e08b61) |
-| LiquidityProviderAgent | `0x4A15Ab0CA037C3Da4177b85B74697aC136f73af7` | [View](https://explorer.testnet.somnia.network/address/0x4A15Ab0CA037C3Da4177b85B74697aC136f73af7) |
-| AgentInterface | `0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499` | [View](https://explorer.testnet.somnia.network/address/0x517Df8d1A94588eBb504CB864DD9B6d9d1c5A499) |
-| AgentOracle | `0xF026E887A1D91158ce4Ec0775e1ed6350B3C0eDa` | [View](https://explorer.testnet.somnia.network/address/0xF026E887A1D91158ce4Ec0775e1ed6350B3C0eDa) |
+| MockUSDC | `0x8D06699a029869f88437ecb10736B57306D3953F` | [View](https://explorer.testnet.somnia.network/address/0x8D06699a029869f88437ecb10736B57306D3953F) |
+| MockPriceFeed | `0xfFcfbe79bAe362734bE77712a34b9Fb35fa86680` | [View](https://explorer.testnet.somnia.network/address/0xfFcfbe79bAe362734bE77712a34b9Fb35fa86680) |
+| OracleAdapter | `0xA159BE1397c49f8Bb662E1ae7E9477BeAf9899c1` | [View](https://explorer.testnet.somnia.network/address/0xA159BE1397c49f8Bb662E1ae7E9477BeAf9899c1) |
+| MarginVault | `0x2396207Bfe22190E0d8B8A511E9Ceae7d4E3f15D` | [View](https://explorer.testnet.somnia.network/address/0x2396207Bfe22190E0d8B8A511E9Ceae7d4E3f15D) |
+| OrderBookFactory | `0xae27803c296916eE36A83220670eB918cAE4BcA5` | [View](https://explorer.testnet.somnia.network/address/0xae27803c296916eE36A83220670eB918cAE4BcA5) |
+| BTC-USD OrderBook | `0x3B10165FD2490575fD514BE52cCCcAd57b3a284e` | [View](https://explorer.testnet.somnia.network/address/0x3B10165FD2490575fD514BE52cCCcAd57b3a284e) |
+| ETH-USD OrderBook | `0xddFBCae15030fF8b23CAd5F4598e7f7801F8A2f9` | [View](https://explorer.testnet.somnia.network/address/0xddFBCae15030fF8b23CAd5F4598e7f7801F8A2f9) |
+| SOL-USD OrderBook | `0x51B411C22daaBc6130600e4c86cCe1Fac3E588CC` | [View](https://explorer.testnet.somnia.network/address/0x51B411C22daaBc6130600e4c86cCe1Fac3E588CC) |
+| PerpEngine | `0x67bae6CA52fAEeB93C1cABAD9C5821A25124F871` | [View](https://explorer.testnet.somnia.network/address/0x67bae6CA52fAEeB93C1cABAD9C5821A25124F871) |
+| LiquidationSentinel | `0xDBB064C78d0d42527a702fFe4d9e8F359f58FB8D` | [View](https://explorer.testnet.somnia.network/address/0xDBB064C78d0d42527a702fFe4d9e8F359f58FB8D) |
+| LiquidityProviderAgent | `0x1Ed3f6994C66aBCd142cEF939D7A50B518fD4246` | [View](https://explorer.testnet.somnia.network/address/0x1Ed3f6994C66aBCd142cEF939D7A50B518fD4246) |
+| AgentInterface | `0x7C07f58CBF26Ae5FFaEBB277A30283935E5E499F` | [View](https://explorer.testnet.somnia.network/address/0x7C07f58CBF26Ae5FFaEBB277A30283935E5E499F) |
+| AgentOracle | `0x65E02f9D13A8D8E35e5D7e9f62Ae90dcA38140b2` | [View](https://explorer.testnet.somnia.network/address/0x65E02f9D13A8D8E35e5D7e9f62Ae90dcA38140b2) |
+| SentimentOracle | `0xFCd8440d2097B7297A9c0944B7Bd448D9D4dCB2f` | [View](https://explorer.testnet.somnia.network/address/0xFCd8440d2097B7297A9c0944B7Bd448D9D4dCB2f) |
+| EnhancedLPAgent | `0x5e9f53f52C7368C6c857e38e4ED2560cB29dfBF4` | [View](https://explorer.testnet.somnia.network/address/0x5e9f53f52C7368C6c857e38e4ED2560cB29dfBF4) |
 
-Deployed on Somnia testnet 2026-05-26. Explorer links above.
+Deployed on Somnia testnet. Addresses are tracked in `scripts/addresses.ts` (canonical) and `frontend/src/config/addresses.ts` (frontend copy).
 
 ## The Graph Subgraph
 
@@ -201,17 +211,17 @@ All agent calls use the **two-pot gas model**: `getRequestDeposit() + pricePerAg
 
 ## Test Coverage
 
-**49 tests passing** across 7 test suites:
+**65 tests passing** across 7 test suites:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
-| `OrderBook.test.ts` | 9 | Placement, matching, partial fills, heap ordering, cancellation, depth |
-| `MarginVault.test.ts` | 6 | Deposits, liquidation prices, withdrawals, authorization |
+| `OrderBook.test.ts` | 10 | Placement, matching, partial fills, heap ordering, cancellation, depth |
+| `MarginVault.test.ts` | 7 | Deposits, liquidation prices, withdrawals, authorization |
 | `LiquidationSentinel.test.ts` | 4 | Position checks, pause/unpause, liquidation guards |
 | `AgentIntegration.test.ts` | 5 | Reactive order flow, price updates, LP rebalance, full cascade liquidation |
 | `AgentOracle.test.ts` | 7 | Deployment, constants, view functions, agent ID verification |
 | `MarginVault.property.test.ts` | 5 | Fast-check: liq price invariants, monotonicity (100+ property runs each) |
-| `OrderBook.invariant.test.ts` | 13 | Fast-check: heap ordering, ID monotonicity, margin non-negative fuzz |
+| `OrderBook.invariant.test.ts` | 27 | Fast-check: heap ordering, ID monotonicity, margin non-negative fuzz (2300+ runs) |
 
 ## Tech Stack
 

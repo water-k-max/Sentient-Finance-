@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
 /**
  * Seed all three order books with initial depth for the demo.
@@ -8,13 +9,6 @@ import { ethers } from "hardhat";
  * Usage: npx hardhat run scripts/seedOrderBook.ts --network somnia
  */
 async function main() {
-  // Deployed addresses (from aad03e8)
-  const ORDER_BOOKS: Record<string, string> = {
-    "BTC-USD": "0xA830E52C62F7694Ed859d9D6414cc203FC20B481",
-    "ETH-USD": "0x64E1235dFd0AC1887B5FB852309f959817ac45B2",
-    "SOL-USD": "0x1873B69a805Bd771cB74bF7a38997c730dcF3158",
-  };
-  const MARGIN_VAULT = "0xe6D13e4bdC46b0DAcB238FAAd8118d9a8033032b";
 
   const pairConfigs: Record<string, { midPrice: number; step: number }> = {
     "BTC-USD": { midPrice: 50000, step: 50 },
@@ -26,7 +20,7 @@ async function main() {
   console.log(`Seeding from: ${deployer.address}\n`);
 
   const MarginVault = await ethers.getContractFactory("MarginVault");
-  const marginVault = MarginVault.attach(MARGIN_VAULT);
+  const marginVault = MarginVault.attach(CONTRACT_ADDRESSES.marginVault);
 
   const OrderBook = await ethers.getContractFactory("OrderBook");
 
@@ -36,7 +30,7 @@ async function main() {
   const leverage = 10n;
 
   // Seed each pair
-  for (const [pairName, obAddr] of Object.entries(ORDER_BOOKS)) {
+  for (const [pairName, obAddr] of Object.entries(CONTRACT_ADDRESSES.orderBooks)) {
     const config = pairConfigs[pairName];
     const midPrice = BigInt(Math.floor(config.midPrice)) * PRICE_SCALE;
     const step = BigInt(Math.floor(config.step * 1e8));

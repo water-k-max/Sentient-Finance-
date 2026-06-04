@@ -47,6 +47,7 @@ export function pairToBytes32(pair: string): string {
 // MarginVault ABI for agent dashboard
 const VAULT_ABI = [
   "function trackedTradersCount() view returns (uint256)",
+  "function deposit(uint256 amount) external",
 ];
 
 const SENTINEL_ABI = [

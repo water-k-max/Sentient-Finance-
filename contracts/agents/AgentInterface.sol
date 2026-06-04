@@ -6,9 +6,9 @@ import {IMarginVault} from "../interfaces/IMarginVault.sol";
 import {SentimentOracle} from "../oracles/SentimentOracle.sol";
 
 /// @title AgentInterface — Reactive gateway for Somnia's event-driven execution
-/// Subscribes to events from OrderBook, OracleAdapter, and SentimentOracle.
-/// Dispatches matching, liquidation, LP rebalance, AND AI sentiment analysis
-/// autonomously — no external caller needed.
+/// Subscribes to events from OrderBook, OracleAdapter/SomniaPriceOracle, and SentimentOracle.
+/// Dispatches matching, liquidation, LP rebalance autonomously — no external caller needed.
+/// Price comes from event data itself, never from an async fetch — Sentinel fires immediately.
 contract AgentInterface {
     IOrderBook public orderBook;
     IMarginVault public marginVault;
@@ -16,7 +16,7 @@ contract AgentInterface {
     address public liquidityProviderAgent;
     address public enhancedLpAgent;
     address public sentimentOracle;
-    address public oracleAdapter;
+    address public priceOracle;  // event source (OracleAdapter, SomniaPriceOracle, or AgentOracle)
     address public owner;
 
     bytes32 public constant PRICE_UPDATED_TOPIC = keccak256("PriceUpdated(bytes32,uint256,uint256)");
@@ -40,13 +40,13 @@ contract AgentInterface {
         address _marginVault,
         address _liquidationSentinel,
         address _liquidityProviderAgent,
-        address _oracleAdapter
+        address _priceOracle
     ) {
         orderBook = IOrderBook(_orderBook);
         marginVault = IMarginVault(_marginVault);
         liquidationSentinel = _liquidationSentinel;
         liquidityProviderAgent = _liquidityProviderAgent;
-        oracleAdapter = _oracleAdapter;
+        priceOracle = _priceOracle;
         owner = msg.sender;
     }
 
@@ -66,7 +66,7 @@ contract AgentInterface {
         require(subscriptions[source][topic], "AgentInterface: not subscribed");
 
         if (topic == PRICE_UPDATED_TOPIC) {
-            (, uint256 newPrice) = abi.decode(data, (bytes32, uint256));
+            (, uint256 newPrice,) = abi.decode(data, (bytes32, uint256, uint256));
             marginVault.updateAllPnL(newPrice);
             _triggerSentinel(newPrice);
             _triggerLPRebalance(newPrice);

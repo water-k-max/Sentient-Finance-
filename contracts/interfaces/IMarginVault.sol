@@ -32,6 +32,7 @@ interface IMarginVault {
     function trackedTradersCount() external view returns (uint256);
     function trackedTraderAt(uint256 index) external view returns (address);
     function isTracked(address trader) external view returns (bool);
+    function adjustMargin(address trader, int256 delta) external;
     function setAuthorized(address _addr, bool authorized) external;
     function isAuthorized(address _addr) external view returns (bool);
 

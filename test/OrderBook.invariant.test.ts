@@ -1,52 +1,73 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { OrderBook, MarginVault } from "../typechain-types";
+import { OrderBook, MarginVault, MockUSDC } from "../typechain-types";
 import fc from "fast-check";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("OrderBook — Invariant Tests", function () {
   let orderBook: OrderBook;
   let marginVault: MarginVault;
+  let mockUSDCGlobal: MockUSDC;
   let trader: HardhatEthersSigner;
 
   const PRICE_SCALE = 10n ** 8n;
-  const SIZE_SCALE = 10n ** 18n;
+  const USDC_SCALE = 10n ** 6n;
+  const ORDER_SIZE_USDC = 100n * USDC_SCALE;
 
   beforeEach(async function () {
     [, trader] = await ethers.getSigners();
 
+    const MockUSDC = await ethers.getContractFactory("MockUSDC");
+    mockUSDCGlobal = await MockUSDC.deploy();
+    await mockUSDCGlobal.waitForDeployment();
+    const usdcAddr = await mockUSDCGlobal.getAddress();
+
     const MarginVaultFactory = await ethers.getContractFactory("MarginVault");
-    marginVault = await MarginVaultFactory.deploy();
+    marginVault = await MarginVaultFactory.deploy(usdcAddr);
     await marginVault.waitForDeployment();
+    const vaultAddr = await marginVault.getAddress();
+
+    const PerpEngineFactory = await ethers.getContractFactory("PerpEngine");
+    const perpEngine = await PerpEngineFactory.deploy(vaultAddr);
+    await perpEngine.waitForDeployment();
 
     const OrderBookFactory = await ethers.getContractFactory("OrderBook");
-    orderBook = await OrderBookFactory.deploy(await marginVault.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
+    orderBook = await OrderBookFactory.deploy(vaultAddr, await perpEngine.getAddress(), ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
     await orderBook.waitForDeployment();
 
     await marginVault.setAuthorized(await orderBook.getAddress(), true);
 
-    // Fund trader heavily
-    await marginVault.connect(trader).deposit(1000000n * SIZE_SCALE);
+    await mockUSDCGlobal.mint(trader.address, 1000000n * USDC_SCALE);
+    await mockUSDCGlobal.connect(trader).approve(vaultAddr, 1000000n * USDC_SCALE);
+    await marginVault.connect(trader).deposit(1000000n * USDC_SCALE);
   });
 
   describe("heap ordering invariants", function () {
     it("bestBid is always >= all other bid prices after any sequence of inserts", async function () {
-      // Deploy a fresh order book for each run to avoid cross-run state
       await fc.assert(
         fc.asyncProperty(
           fc.uniqueArray(fc.integer({ min: 40000, max: 60000 }), { minLength: 3, maxLength: 10 }),
           async (prices) => {
-            const obFactory = await ethers.getContractFactory("OrderBook");
-            const mvFactory = await ethers.getContractFactory("MarginVault");
-            const mv = await mvFactory.deploy();
+            const MockUSDC = await ethers.getContractFactory("MockUSDC");
+            const musdc = await MockUSDC.deploy();
+            await musdc.waitForDeployment();
+            const mf = await ethers.getContractFactory("MarginVault");
+            const mv = await mf.deploy(await musdc.getAddress());
             await mv.waitForDeployment();
-            const ob = await obFactory.deploy(await mv.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
+            const vaultAddr = await mv.getAddress();
+            const pf = await ethers.getContractFactory("PerpEngine");
+            const pe = await pf.deploy(vaultAddr);
+            await pe.waitForDeployment();
+            const of = await ethers.getContractFactory("OrderBook");
+            const ob = await of.deploy(vaultAddr, await pe.getAddress(), ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
             await ob.waitForDeployment();
             await mv.setAuthorized(await ob.getAddress(), true);
-            await mv.connect(trader).deposit(1000000n * SIZE_SCALE);
+            await musdc.mint(trader.address, 1000000n * USDC_SCALE);
+            await musdc.connect(trader).approve(vaultAddr, 1000000n * USDC_SCALE);
+            await mv.connect(trader).deposit(1000000n * USDC_SCALE);
 
             const leverage = 10n;
-            const size = 1n * SIZE_SCALE;
+            const size = ORDER_SIZE_USDC;
 
             for (const p of prices) {
               await ob.connect(trader).placeOrder(
@@ -71,17 +92,26 @@ describe("OrderBook — Invariant Tests", function () {
         fc.asyncProperty(
           fc.uniqueArray(fc.integer({ min: 40000, max: 60000 }), { minLength: 3, maxLength: 10 }),
           async (prices) => {
-            const obFactory = await ethers.getContractFactory("OrderBook");
-            const mvFactory = await ethers.getContractFactory("MarginVault");
-            const mv = await mvFactory.deploy();
+            const MockUSDC = await ethers.getContractFactory("MockUSDC");
+            const musdc = await MockUSDC.deploy();
+            await musdc.waitForDeployment();
+            const mf = await ethers.getContractFactory("MarginVault");
+            const mv = await mf.deploy(await musdc.getAddress());
             await mv.waitForDeployment();
-            const ob = await obFactory.deploy(await mv.getAddress(), ethers.ZeroAddress, ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
+            const vaultAddr = await mv.getAddress();
+            const pf = await ethers.getContractFactory("PerpEngine");
+            const pe = await pf.deploy(vaultAddr);
+            await pe.waitForDeployment();
+            const of = await ethers.getContractFactory("OrderBook");
+            const ob = await of.deploy(vaultAddr, await pe.getAddress(), ethers.keccak256(ethers.toUtf8Bytes("BTC-USD")));
             await ob.waitForDeployment();
             await mv.setAuthorized(await ob.getAddress(), true);
-            await mv.connect(trader).deposit(1000000n * SIZE_SCALE);
+            await musdc.mint(trader.address, 1000000n * USDC_SCALE);
+            await musdc.connect(trader).approve(vaultAddr, 1000000n * USDC_SCALE);
+            await mv.connect(trader).deposit(1000000n * USDC_SCALE);
 
             const leverage = 10n;
-            const size = 1n * SIZE_SCALE;
+            const size = ORDER_SIZE_USDC;
 
             for (const p of prices) {
               await ob.connect(trader).placeOrder(
@@ -107,7 +137,7 @@ describe("OrderBook — Invariant Tests", function () {
           fc.integer({ min: 5, max: 15 }),
           async (count) => {
             const leverage = 10n;
-            const size = 1n * SIZE_SCALE;
+            const size = ORDER_SIZE_USDC;
             let lastId = -1n;
 
             for (let i = 0; i < count; i++) {
@@ -153,20 +183,24 @@ describe("OrderBook — Invariant Tests", function () {
               );
 
               switch (action) {
-                case "deposit":
-                  await marginVault.connect(trader).deposit(100n * SIZE_SCALE);
+                case "deposit": {
+                  const amt = 100n * USDC_SCALE;
+                  await mockUSDCGlobal.mint(trader.address, amt);
+                  await mockUSDCGlobal.connect(trader).approve(await marginVault.getAddress(), amt);
+                  await marginVault.connect(trader).deposit(amt);
                   break;
+                }
                 case "withdraw":
                   if (balance > 0n) {
-                    await marginVault.connect(trader).withdraw(1n * SIZE_SCALE);
+                    await marginVault.connect(trader).withdraw(1n * USDC_SCALE);
                   }
                   break;
                 case "placeOrder":
-                  if (balance > 10n * SIZE_SCALE) {
+                  if (balance > 10n * USDC_SCALE) {
                     const tx = await orderBook.connect(trader).placeOrder(
                       true,
                       50000n * PRICE_SCALE,
-                      1n * SIZE_SCALE,
+                      ORDER_SIZE_USDC,
                       10n
                     );
                     const receipt = await tx.wait();
@@ -187,11 +221,9 @@ describe("OrderBook — Invariant Tests", function () {
                   break;
               }
 
-              // Invariant: balance is never negative (uint256 can't be negative, but check it's accessible)
               const newBalance = await marginVault.getCollateralBalance(
                 await trader.getAddress()
               );
-              // uint256 can't be negative by definition, but this ensures no reverts
               expect(newBalance >= 0n).to.be.true;
             }
           }

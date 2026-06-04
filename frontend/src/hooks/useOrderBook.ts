@@ -24,7 +24,7 @@ interface OrderBookState {
 }
 
 const PRICE_SCALE = 1e8;
-const SIZE_SCALE = 1e18;
+const SIZE_SCALE = 1e6;
 
 export function useOrderBook(pair: string, pollInterval = 2000): OrderBookState {
   const [state, setState] = useState<OrderBookState>({

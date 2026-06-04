@@ -1,6 +1,6 @@
 import { ethers } from "hardhat";
+import { CONTRACT_ADDRESSES } from "./addresses";
 
-const ORACLE = "0x5175AA5bd8DC3981346c22949faCf40Ae2479163";
 const ASSET_ID = ethers.keccak256(ethers.toUtf8Bytes("BTC-USD"));
 
 async function main() {
@@ -16,7 +16,7 @@ async function main() {
   console.log(`BTC: $${priceFloat.toLocaleString()} → ${price.toString()}`);
 
   const Oracle = await ethers.getContractFactory("SomniaPriceOracle");
-  const oracle = Oracle.attach(ORACLE);
+  const oracle = Oracle.attach(CONTRACT_ADDRESSES.somniaPriceOracle);
   const tx = await oracle.connect(keeper).postPrice(ASSET_ID, price);
   await tx.wait();
   console.log(`✅ Posted → tx: ${tx.hash}`);
