@@ -2,7 +2,11 @@ import { useProtocolStats, useOraclePrice } from "../hooks/useOraclePrice";
 
 export default function Stats() {
   const stats = useProtocolStats();
-  const btcPrice = useOraclePrice("BTC-USD");
+  const { price: btcPrice } = useOraclePrice("BTC-USD");
+
+  const markPrice = stats.markPrice;
+  const indexPrice = btcPrice ?? 0;
+  const fundingBps = indexPrice > 0 ? ((markPrice - indexPrice) / indexPrice) * 10000 : 0;
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -14,18 +18,24 @@ export default function Stats() {
       <div className="grid grid-cols-3 gap-4 mb-8">
         <StatCard
           label="Total Volume"
-          value={`${stats.totalVolume.toFixed(2)} BTC`}
+          value={`${stats.totalVolume.toFixed(2)} USDC`}
           sub={stats.totalVolume > 0 ? "Live on-chain" : "No trades yet"}
         />
         <StatCard
           label="BTC Index Price"
-          value={btcPrice ? `$${btcPrice.toLocaleString()}` : "—"}
-          sub={btcPrice ? "From OracleAdapter" : "Awaiting oracle"}
+          value={indexPrice ? `$${indexPrice.toLocaleString()}` : "—"}
+          sub={indexPrice ? "From OracleAdapter (live)" : "Awaiting oracle"}
         />
         <StatCard
           label="Mark Price (VWAP)"
-          value={stats.markPrice ? `$${stats.markPrice.toLocaleString()}` : "—"}
-          sub="Volume-weighted from fills"
+          value={markPrice ? `$${markPrice.toLocaleString()}` : "—"}
+          sub="Volume-weighted average from fills"
+        />
+        <StatCard
+          label="Funding Rate Signal"
+          value={fundingBps !== 0 ? `${fundingBps >= 0 ? "+" : ""}${fundingBps.toFixed(2)} bps` : "—"}
+          sub={fundingBps > 0 ? "Perps above spot (longs pay)" : fundingBps < 0 ? "Perps below spot (shorts pay)" : "No trades yet"}
+          highlight={Math.abs(fundingBps) > 10 ? fundingBps > 0 ? "red" : "green" : undefined}
         />
         <StatCard
           label="Active Pairs"
@@ -84,15 +94,17 @@ function StatCard({
   label,
   value,
   sub,
+  highlight,
 }: {
   label: string;
   value: string;
   sub: string;
+  highlight?: string;
 }) {
   return (
     <div className="border border-border rounded-lg p-4 bg-surface">
       <div className="text-xs text-gray-500 mb-1">{label}</div>
-      <div className="text-lg font-medium text-white">{value}</div>
+      <div className={`text-lg font-medium ${highlight === "red" ? "text-red" : highlight === "green" ? "text-green" : "text-white"}`}>{value}</div>
       <div className="text-xs text-gray-600 mt-1">{sub}</div>
     </div>
   );

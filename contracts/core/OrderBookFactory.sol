@@ -42,6 +42,15 @@ contract OrderBookFactory {
         return orderBookAddr;
     }
 
+    /// @notice Passthrough to clear stale orders from a specific pair's book.
+    ///         The factory is the owner of each OrderBook, so only this contract
+    ///         can call adminClearBook on the OrderBook. This function allows the
+    ///         factory owner (deployer) to trigger the clear.
+    function adminClearBook(bytes32 pairId) external onlyOwner {
+        require(pairExists[pairId], "Factory: pair not found");
+        OrderBook(payable(pairOrderBooks[pairId])).adminClearBook();
+    }
+
     /// @notice Get all registered pairs
     function getAllPairs() external view returns (bytes32[] memory) {
         return allPairs;

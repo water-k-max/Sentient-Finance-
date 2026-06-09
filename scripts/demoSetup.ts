@@ -189,8 +189,8 @@ async function main() {
     // ── Stale check + clear ────────────────────────────────────────────────────
     // If any orders exist, check if price is fresh (within 5% of live).
     // Fresh + both sides present → skip (already seeded).
-    // Stale or one-sided → clear the book first so new bids don't immediately
-    // cross against old asks, then fall through to re-seed.
+    // Stale or one-sided → clear the book via the factory (which is the owner),
+    // then fall through to re-seed.
     const bestBid = await orderBook.bestBid();
     const bestAsk = await orderBook.bestAsk();
 
@@ -204,12 +204,14 @@ async function main() {
         continue;
       }
 
-      // Stale or partially seeded — clear heaps before re-seeding so new bids
-      // don't cross stale asks and trigger unwanted self-matches.
+      // Stale or partially seeded — clear heaps via factory (which is OrderBook owner)
       console.log(`   🧹 ${pairName}: clearing stale orders (existing bid: $${existingMid.toLocaleString()}, live: $${livePrice.toLocaleString()})...`);
       try {
-        await (await orderBook.connect(deployer).adminClearBook()).wait();
-        console.log(`      ✅ Book cleared`);
+        const OrderBookFactory = await ethers.getContractFactory("OrderBookFactory");
+        const factory = OrderBookFactory.attach(CONTRACT_ADDRESSES.orderBookFactory);
+        const pairId = ethers.keccak256(ethers.toUtf8Bytes(pairName));
+        await (await factory.connect(deployer).adminClearBook(pairId)).wait();
+        console.log(`      ✅ Book cleared via factory`);
       } catch (e: any) {
         console.log(`      ⚠️  adminClearBook failed: ${e?.reason || e?.message}`);
         console.log(`         Proceeding anyway — new bids may cross stale asks`);

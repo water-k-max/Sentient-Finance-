@@ -52,21 +52,28 @@ export function useOrderBook(pair: string, pollInterval = 2000): OrderBookState 
           provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
         }
         const orderBook = new ethers.Contract(orderBookAddr, ORDERBOOK_ABI, provider);
-        const [bidPrices, bidSizes, askPrices, askSizes] = await orderBook.getOrderBookDepth(20);
+        const [bidPrices, bidSizes, askPrices, askSizes] = await orderBook.getOrderBookDepth(30);
         const bestBidRaw = await orderBook.bestBid();
         const bestAskRaw = await orderBook.bestAsk();
 
         if (cancelled) return;
 
-        const bids: OrderBookEntry[] = bidPrices.map((p: bigint, i: number) => ({
-          price: Number(p) / PRICE_SCALE,
-          size: Number(bidSizes[i]) / SIZE_SCALE,
-        }));
+        // Filter zero-size entries — filled/cancelled orders still in heap
+        const bids: OrderBookEntry[] = bidPrices
+          .map((p: bigint, i: number) => ({
+            price: Number(p) / PRICE_SCALE,
+            size: Number(bidSizes[i]) / SIZE_SCALE,
+          }))
+          .filter((l: OrderBookEntry) => l.size > 0)
+          .slice(0, 10);
 
-        const asks: OrderBookEntry[] = askPrices.map((p: bigint, i: number) => ({
-          price: Number(p) / PRICE_SCALE,
-          size: Number(askSizes[i]) / SIZE_SCALE,
-        }));
+        const asks: OrderBookEntry[] = askPrices
+          .map((p: bigint, i: number) => ({
+            price: Number(p) / PRICE_SCALE,
+            size: Number(askSizes[i]) / SIZE_SCALE,
+          }))
+          .filter((l: OrderBookEntry) => l.size > 0)
+          .slice(0, 10);
 
         setState({
           bids,

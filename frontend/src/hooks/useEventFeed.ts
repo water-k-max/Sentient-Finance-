@@ -1,136 +1,171 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
-export interface FeedEvent {
-  timestamp: Date;
-  message: string;
-  type: "match" | "liquidation" | "rebalance" | "order";
+const PERP_ENGINE_ABI = [
+  "event PositionOpened(bytes32 indexed pairId, address indexed trader, uint256 size, uint256 margin, bool isLong, uint256 entryPrice)",
+  "event PositionClosed(bytes32 indexed pairId, address indexed trader, uint256 size, uint256 pnl, uint256 exitPrice)",
+  "event OrderPlaced(bytes32 indexed pairId, address indexed trader, uint256 size, uint256 price, bool isLong)",
+  "event OrderCancelled(bytes32 indexed pairId, address indexed trader, uint256 size, uint256 price, bool isLong)",
+  "event PositionLiquidated(bytes32 indexed pairId, address indexed trader, uint256 size, uint256 remainingMargin, uint256 price)",
+  "event Rebalance(bytes32 indexed pairId, uint256 oldPrice, uint256 newPrice, uint256 sizeChange)",
+  "function getMarkPrice(bytes32 pairId) view returns (uint256)",
+];
+
+const SIZE_SCALE = 1e6;
+const PRICE_SCALE = 1e8;
+
+interface FeedEvent {
+  type: "open" | "close" | "place" | "cancel" | "liquidation" | "rebalance";
+  trader?: string;
+  size: string;
+  price: string;
+  ts: number;
+  side?: string;
 }
 
-const ORDERBOOK_ABI = [
-  "event OrderPlaced(uint256 indexed orderId, address indexed trader, bool isBid, uint256 price, uint256 size)",
-  "event OrderMatched(uint256 indexed bidOrderId, uint256 indexed askOrderId, uint256 fillPrice, uint256 fillSize)",
-];
+function formatSize(raw: bigint): string {
+  const val = Number(raw) / SIZE_SCALE;
+  return val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val.toFixed(2);
+}
 
-const VAULT_ABI = [
-  "event LiquidationExecuted(address indexed trader, uint256 liquidationPrice, uint256 remainingMargin)",
-];
+function formatPrice(raw: bigint): string {
+  const val = Number(raw) / PRICE_SCALE;
+  return val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
 
-const LP_AGENT_ABI = [
-  "event Rebalanced(uint256 midPrice, uint256 spreadBps)",
-];
+function parseLog(log: ethers.Log, iface: ethers.Interface): FeedEvent | null {
+  try {
+    const parsed = iface.parseLog(log);
+    if (!parsed) return null;
 
-const PRICE_SCALE = 1e8;
-const SIZE_SCALE = 1e18;
+    const base: FeedEvent = {
+      type: "place",
+      size: "",
+      price: "",
+      ts: Date.now(),
+    };
 
-export function useEventFeed(pair = "BTC-USD", maxEvents = 50): FeedEvent[] {
+    switch (parsed.name) {
+      case "PositionOpened": {
+        const s = parsed.args.size as bigint;
+        const p = parsed.args.entryPrice as bigint;
+        return {
+          ...base,
+          type: "open",
+          trader: (parsed.args.trader as string).slice(0, 6) + "…",
+          size: `${formatSize(s)} USDC`,
+          price: `$${formatPrice(p)}`,
+          side: parsed.args.isLong ? "Long" : "Short",
+        };
+      }
+      case "PositionClosed": {
+        const s = parsed.args.size as bigint;
+        const pnl = Number(parsed.args.pnl) / 1e6;
+        return {
+          ...base,
+          type: "close",
+          trader: (parsed.args.trader as string).slice(0, 6) + "…",
+          size: `${formatSize(s)} USDC`,
+          price: `PnL $${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`,
+          side: pnl >= 0 ? "Win" : "Loss",
+        };
+      }
+      case "OrderPlaced": {
+        const s = parsed.args.size as bigint;
+        const p = parsed.args.price as bigint;
+        return {
+          ...base,
+          type: "place",
+          trader: (parsed.args.trader as string).slice(0, 6) + "…",
+          size: `${formatSize(s)} USDC @ $${formatPrice(p)}`,
+          side: parsed.args.isLong ? "Bid" : "Ask",
+        };
+      }
+      case "OrderCancelled": {
+        const s = parsed.args.size as bigint;
+        const p = parsed.args.price as bigint;
+        return {
+          ...base,
+          type: "cancel",
+          trader: (parsed.args.trader as string).slice(0, 6) + "…",
+          size: `${formatSize(s)} USDC @ $${formatPrice(p)}`,
+          side: parsed.args.isLong ? "Bid" : "Ask",
+        };
+      }
+      case "PositionLiquidated": {
+        const s = parsed.args.size as bigint;
+        const p = parsed.args.price as bigint;
+        const rem = Number(parsed.args.remainingMargin) / 1e6;
+        return {
+          ...base,
+          type: "liquidation",
+          trader: (parsed.args.trader as string).slice(0, 6) + "…",
+          size: `${formatSize(s)} USDC (rem ${rem.toFixed(2)})`,
+          price: `$${formatPrice(p)}`,
+        };
+      }
+      case "Rebalance": {
+        const oldP = parsed.args.oldPrice as bigint;
+        const newP = parsed.args.newPrice as bigint;
+        const sc = Number(parsed.args.sizeChange) / 1e6;
+        return {
+          ...base,
+          type: "rebalance",
+          size: `${sc >= 0 ? "+" : ""}${sc.toFixed(2)} USDC`,
+          price: `${formatPrice(oldP)} → ${formatPrice(newP)}`,
+        };
+      }
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+export function useEventFeed(_pair: string, _pollInterval = 5000) {
   const [events, setEvents] = useState<FeedEvent[]>([]);
-  const lastBlockRef = useRef<number>(0);
 
   useEffect(() => {
-    const orderBookAddr = CONTRACT_ADDRESSES.orderBooks[pair as keyof typeof CONTRACT_ADDRESSES.orderBooks];
-    const vaultAddr = CONTRACT_ADDRESSES.marginVault;
-    const lpAddr = CONTRACT_ADDRESSES.liquidityProviderAgent;
-
-    if (
-      !orderBookAddr || orderBookAddr === ethers.ZeroAddress ||
-      !vaultAddr || vaultAddr === ethers.ZeroAddress
-    ) {
-      return;
-    }
+    const peAddr = CONTRACT_ADDRESSES.perpEngine;
+    if (!peAddr || peAddr === ethers.ZeroAddress) return;
 
     let cancelled = false;
     const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
-    const orderBook = new ethers.Contract(orderBookAddr, ORDERBOOK_ABI, provider);
-    const vault = new ethers.Contract(vaultAddr, VAULT_ABI, provider);
-    const lpAgent = new ethers.Contract(lpAddr, LP_AGENT_ABI, provider);
+    const iface = new ethers.Interface(PERP_ENGINE_ABI);
 
-    const fetchEvents = async () => {
+    const fetch = async () => {
       try {
         const currentBlock = await provider.getBlockNumber();
-        if (cancelled) return;
+        const fromBlock = currentBlock - 500;
 
-        const fromBlock = lastBlockRef.current > 0
-          ? lastBlockRef.current
-          : Math.max(0, currentBlock - 100);
-        const toBlock = currentBlock;
-
-        if (fromBlock >= toBlock) return;
-
-        const [matched, placed, liquidations, rebalanced] = await Promise.allSettled([
-          orderBook.queryFilter("OrderMatched", fromBlock, toBlock),
-          orderBook.queryFilter("OrderPlaced", fromBlock, toBlock),
-          vault.queryFilter("LiquidationExecuted", fromBlock, toBlock),
-          lpAgent.queryFilter("Rebalanced", fromBlock, toBlock),
-        ]);
+        const logs = await provider.getLogs({
+          address: peAddr,
+          fromBlock,
+          toBlock: currentBlock,
+        });
 
         if (cancelled) return;
 
-        const newEvents: FeedEvent[] = [];
+        const parsed = logs
+          .map((l) => parseLog(l, iface))
+          .filter((e): e is FeedEvent => e !== null)
+          .reverse()
+          .slice(0, 50);
 
-        if (matched.status === "fulfilled") {
-          for (const e of matched.value) {
-            const args = (e as any).args;
-            newEvents.push({
-              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
-              message: `Order matched: ${(Number(args.fillSize) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(args.fillPrice) / PRICE_SCALE).toLocaleString()}`,
-              type: "match",
-            });
-          }
+        if (parsed.length > 0) {
+          setEvents(parsed);
         }
-
-        if (placed.status === "fulfilled") {
-          for (const e of placed.value) {
-            const args = (e as any).args;
-            newEvents.push({
-              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
-              message: `${args.isBid ? "Buy" : "Sell"} order placed: ${(Number(args.size) / SIZE_SCALE).toFixed(4)} BTC @ $${(Number(args.price) / PRICE_SCALE).toLocaleString()}`,
-              type: "order",
-            });
-          }
-        }
-
-        if (liquidations.status === "fulfilled") {
-          for (const e of liquidations.value) {
-            const args = (e as any).args;
-            newEvents.push({
-              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
-              message: `Sentinel liquidated ${args.trader.slice(0, 6)}...${args.trader.slice(-4)} at $${(Number(args.liquidationPrice) / PRICE_SCALE).toLocaleString()}`,
-              type: "liquidation",
-            });
-          }
-        }
-
-        if (rebalanced.status === "fulfilled") {
-          for (const e of rebalanced.value) {
-            const args = (e as any).args;
-            newEvents.push({
-              timestamp: new Date(Number((e as any).blockTimestamp || 0) * 1000),
-              message: `LP Agent rebalanced spread to ${(Number(args.spreadBps) / 100).toFixed(2)}% at $${(Number(args.midPrice) / PRICE_SCALE).toLocaleString()}`,
-              type: "rebalance",
-            });
-          }
-        }
-
-        if (newEvents.length > 0) {
-          setEvents((prev) => [...newEvents, ...prev].slice(0, maxEvents));
-        }
-
-        lastBlockRef.current = toBlock;
-      } catch (e) {
-        console.error("Failed to fetch events:", e);
+      } catch {
+        // silent
       }
     };
 
-    fetchEvents();
-    const interval = setInterval(fetchEvents, 5000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [pair]);
+    fetch();
+    const interval = setInterval(fetch, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   return events;
 }

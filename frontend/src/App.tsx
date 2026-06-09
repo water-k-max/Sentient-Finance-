@@ -1,8 +1,8 @@
-import { useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
 import TradingView from "./pages/TradingView";
 import AgentDashboard from "./pages/AgentDashboard";
 import Stats from "./pages/Stats";
+import WalletButton from "./components/WalletButton";
 
 export default function App() {
   return (
@@ -73,43 +73,5 @@ export default function App() {
         </footer>
       </div>
     </BrowserRouter>
-  );
-}
-
-function WalletButton() {
-  const [connected, setConnected] = useState(false);
-  const [address, setAddress] = useState("");
-
-  const connect = async () => {
-    if (!window.ethereum) {
-      alert("Please install MetaMask or another Web3 wallet");
-      return;
-    }
-    try {
-      const accounts = (await window.ethereum.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      setAddress(accounts[0]);
-      setConnected(true);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  if (connected) {
-    return (
-      <div className="text-sm text-cyan border border-cyan/30 px-3 py-1 rounded">
-        {address.slice(0, 6)}...{address.slice(-4)}
-      </div>
-    );
-  }
-
-  return (
-    <button
-      onClick={connect}
-      className="text-sm bg-cyan/10 text-cyan border border-cyan/30 px-4 py-2 rounded hover:bg-cyan/20 transition-colors"
-    >
-      Connect Wallet
-    </button>
   );
 }

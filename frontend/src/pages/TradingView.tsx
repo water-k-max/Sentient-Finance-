@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import OrderBook from "../components/OrderBook";
 import TradeForm from "../components/TradeForm";
 import PositionsPanel from "../components/PositionsPanel";
+import DepositPanel from "../components/DepositPanel";
 import EventFeed from "../components/EventFeed";
 import PriceChart from "../components/PriceChart";
 import { useWallet } from "../hooks/useWallet";
@@ -10,7 +11,6 @@ import { usePosition } from "../hooks/usePosition";
 import { useEventFeed } from "../hooks/useEventFeed";
 import { isDeployed as checkDeployed } from "../config/addresses";
 import { useOraclePrice } from "../hooks/useOraclePrice";
-import { getPriceHistory, addPricePoint, subscribeToPriceHistory } from "../lib/priceHistory";
 import { useTrade } from "../hooks/useTrade";
 
 type TradingPair = "BTC-USD" | "ETH-USD" | "SOL-USD";
@@ -27,26 +27,13 @@ export default function TradingView() {
 
   const liveOrderBook = useOrderBook(pair);
   const { address, signer, connected } = useWallet();
-  const livePosition = usePosition(address);
+  const { position: livePosition, health, collateral } = usePosition(address);
   const liveEvents = useEventFeed(pair);
   const isDeployed = checkDeployed();
   const isLive = isDeployed && connected;
-  const oraclePrice = useOraclePrice(pair, 1500);
+  const { price: oraclePrice, history: priceHistory } = useOraclePrice(pair, 2000);
   const [txStatus, setTxStatus] = useState<string | null>(null);
   const { executeTrade, executeClosePosition } = useTrade();
-
-  const [priceHistory, setPriceHistory] = useState<number[]>(getPriceHistory);
-
-  useEffect(() => {
-    setPriceHistory(getPriceHistory());
-    return subscribeToPriceHistory(() => setPriceHistory([...getPriceHistory()]));
-  }, []);
-
-  useEffect(() => {
-    if (oraclePrice) {
-      addPricePoint(oraclePrice);
-    }
-  }, [oraclePrice]);
 
   const handleTrade = useCallback(async (type: "buy" | "sell", size: number, leverage: number, price?: number) => {
     if (!isLive || !signer) {
@@ -111,7 +98,7 @@ export default function TradingView() {
 
       <div className="col-span-6 flex flex-col">
         <div className="flex-1 border-b border-border">
-          <PriceChart data={priceHistory} pair={pair} />
+          <PriceChart history={priceHistory} pair={pair} />
         </div>
         <div className="p-4">
           <TradeForm onTrade={handleTrade} symbol={symbol} isLive={isLive} txStatus={txStatus} oraclePrice={oraclePrice ?? 0} />
@@ -121,17 +108,19 @@ export default function TradingView() {
       <div className="col-span-3 flex flex-col">
         <div className="border-b border-border">
           <PositionsPanel
-            symbol={symbol}
             position={livePosition ?? undefined}
             markPrice={oraclePrice ?? undefined}
+            health={health}
+            collateral={collateral}
             onClosePosition={handleClosePosition}
           />
         </div>
+        <DepositPanel signer={signer} />
         <div className="flex-1 overflow-hidden flex flex-col">
           <div className="px-4 py-2 border-b border-border text-sm text-gray-400 font-heading">
             AGENT ACTIVITY <span className="text-green ml-2">● LIVE</span>
           </div>
-          <EventFeed events={liveEvents.map(e => e.message)} />
+          <EventFeed events={liveEvents} />
         </div>
       </div>
     </div>

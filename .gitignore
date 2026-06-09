@@ -44,3 +44,4 @@ gas-report.txt
 # Temporary files
 *.tmp
 *.bak
+.opencode/

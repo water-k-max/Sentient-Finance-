@@ -207,6 +207,13 @@ async function main() {
     console.log("  → Subscribed: PriceUpdated events (AgentOracle)");
   }
 
+  if (SOMNIA_AGENTS_PLATFORM) {
+    await agentInterface.setSomniaReactiveAddress(SOMNIA_AGENTS_PLATFORM);
+    console.log("  → Somnia reactive address wired into AgentInterface");
+  } else {
+    console.log("  ⚠️  SOMNIA_AGENTS_PLATFORM_ADDRESS not set — onEvent() restricted to owner only");
+  }
+
   // ── 15. Fund LP Agents ──────────────────────────────────────────────────────
   // MarginVault.deposit() now does transferFrom — agents need USDC minted TO
   // them first, then they approve the vault, then call deposit themselves.
@@ -220,7 +227,7 @@ async function main() {
   // orderSizeUSDC passed to initialize() — agents deposit (orderSize * 2) internally.
   // 5,000 USDC per side × 2 sides = 10,000 USDC needed per agent.
   const ORDER_SIZE_USDC = 5_000n * USDC_SCALE;   // 5,000 USDC per order side (6 decimals)
-  const LP_FUND_USDC = ORDER_SIZE_USDC * 2n;  // 10,000 USDC total per agent
+  const LP_FUND_USDC = ORDER_SIZE_USDC * 10n;  // 50,000 USDC total per agent
 
   // Mint USDC directly to each agent contract address.
   // initialize() now calls: collateralToken.safeApprove(vault, amount) → vault.deposit(amount)

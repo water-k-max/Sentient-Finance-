@@ -160,7 +160,9 @@ contract OrderBook is IOrderBook {
         return orders[askHeap[0]].price;
     }
 
-    /// @notice Get order book depth for frontend visualization
+    /// @notice Get order book depth for frontend visualization.
+    ///         Only returns orders with size > 0 and status OPEN or PARTIALLY_FILLED.
+    ///         Partially-filled orders at non-root positions are excluded.
     function getOrderBookDepth(uint256 levels)
         external view
         returns (
@@ -170,8 +172,37 @@ contract OrderBook is IOrderBook {
             uint256[] memory askSizes
         )
     {
-        uint256 bidCount = bidHeap.length < levels ? bidHeap.length : levels;
-        uint256 askCount = askHeap.length < levels ? askHeap.length : levels;
+        uint256[] memory tmpBidP = new uint256[](bidHeap.length);
+        uint256[] memory tmpBidS = new uint256[](bidHeap.length);
+        uint256 bidCount = 0;
+
+        for (uint256 i = 0; i < bidHeap.length && bidCount < levels; i++) {
+            Order memory o = orders[bidHeap[i]];
+            if (o.size > 0 && (
+                o.status == OrderStatus.OPEN ||
+                o.status == OrderStatus.PARTIALLY_FILLED
+            )) {
+                tmpBidP[bidCount] = o.price;
+                tmpBidS[bidCount] = o.size;
+                bidCount++;
+            }
+        }
+
+        uint256[] memory tmpAskP = new uint256[](askHeap.length);
+        uint256[] memory tmpAskS = new uint256[](askHeap.length);
+        uint256 askCount = 0;
+
+        for (uint256 i = 0; i < askHeap.length && askCount < levels; i++) {
+            Order memory o = orders[askHeap[i]];
+            if (o.size > 0 && (
+                o.status == OrderStatus.OPEN ||
+                o.status == OrderStatus.PARTIALLY_FILLED
+            )) {
+                tmpAskP[askCount] = o.price;
+                tmpAskS[askCount] = o.size;
+                askCount++;
+            }
+        }
 
         bidPrices = new uint256[](bidCount);
         bidSizes  = new uint256[](bidCount);
@@ -179,14 +210,12 @@ contract OrderBook is IOrderBook {
         askSizes  = new uint256[](askCount);
 
         for (uint256 i = 0; i < bidCount; i++) {
-            Order memory o = orders[bidHeap[i]];
-            bidPrices[i]   = o.price;
-            bidSizes[i]    = o.size;
+            bidPrices[i] = tmpBidP[i];
+            bidSizes[i]  = tmpBidS[i];
         }
         for (uint256 i = 0; i < askCount; i++) {
-            Order memory o = orders[askHeap[i]];
-            askPrices[i]   = o.price;
-            askSizes[i]    = o.size;
+            askPrices[i] = tmpAskP[i];
+            askSizes[i]  = tmpAskS[i];
         }
     }
 
@@ -238,6 +267,26 @@ contract OrderBook is IOrderBook {
             uint256 fillPrice = bid.timestamp <= ask.timestamp ? bid.price : ask.price;
             uint256 fillSize  = bid.size < ask.size ? bid.size : ask.size;
 
+            // ── Release locked margin BEFORE settlePosition ────────────────────
+            // placeOrder called lockMargin(trader, requiredMargin) which moved funds
+            // from collateralBalances → lockedMargin.
+            // settlePosition → _openPosition deducts from collateralBalances again.
+            // Without releasing first, the trader is double-debited and _openPosition
+            // reverts with "insufficient free margin".
+            // Release the fill-proportional share of each order's locked margin
+            // so collateralBalances has the funds available for _openPosition.
+            uint256 bidTotalSize  = bid.size;   // snapshot before deduction
+            uint256 askTotalSize  = ask.size;
+            uint256 bidFillMargin = bidTotalSize > 0 ? (bid.margin * fillSize) / bidTotalSize : bid.margin;
+            uint256 askFillMargin = askTotalSize > 0 ? (ask.margin * fillSize) / askTotalSize : ask.margin;
+
+            marginVault.releaseMargin(bid.trader, bidFillMargin);
+            marginVault.releaseMargin(ask.trader, askFillMargin);
+
+            // Reduce stored order margin proportionally to the fill
+            bid.margin -= bidFillMargin;
+            ask.margin -= askFillMargin;
+
             bid.size -= fillSize;
             ask.size -= fillSize;
 
@@ -255,15 +304,9 @@ contract OrderBook is IOrderBook {
                 ask.status = OrderStatus.PARTIALLY_FILLED;
             }
 
-            // Release locked margin for the filled portion before settlePosition
-            // re-locks it via _openPosition. This prevents double-deduction:
-            //   lockMargin (placeOrder) + _openPosition (settlePosition).
-            uint256 bidFilledMargin = fillSize / bid.leverage;
-            uint256 askFilledMargin = fillSize / ask.leverage;
-            if (bidFilledMargin > 0) marginVault.releaseMargin(bid.trader, bidFilledMargin);
-            if (askFilledMargin > 0) marginVault.releaseMargin(ask.trader, askFilledMargin);
-
-            // Settle: bid=long, ask=short
+            // Settle: bid=long, ask=short.
+            // _openPosition now finds the released margin in collateralBalances
+            // and locks it correctly — no double-deduction.
             marginVault.settlePosition(
                 bid.trader, ask.trader,
                 fillPrice, fillSize,

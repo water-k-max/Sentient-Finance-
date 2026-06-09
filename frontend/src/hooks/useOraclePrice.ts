@@ -2,33 +2,45 @@ import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { CONTRACT_ADDRESSES, SOMNIA_RPC_URL } from "../config/addresses";
 
-
 const PERP_ENGINE_ABI = [
   "function getMarkPrice(bytes32 pairId) view returns (uint256)",
   "function totalVolume() view returns (uint256)",
 ];
 
-export function useOraclePrice(_pair: string, pollInterval = 3000): number | null {
+const ORACLE_ADAPTER_ABI = [
+  "function latestPrice() view returns (uint256)",
+];
+
+interface PricePoint {
+  t: number;
+  p: number;
+}
+
+export function useOraclePrice(_pair: string, pollInterval = 2000) {
   const [price, setPrice] = useState<number | null>(null);
+  const [history, setHistory] = useState<PricePoint[]>([]);
 
   useEffect(() => {
-    // Read from OracleAdapter (the demo price trigger path):
-    // updatePrice.ts → MockPriceFeed → OracleAdapter.updatePriceDirect() → PriceUpdated
     const addr = CONTRACT_ADDRESSES.oracleAdapter;
     if (!addr || addr === ethers.ZeroAddress) return;
 
     let cancelled = false;
     const provider = new ethers.JsonRpcProvider(SOMNIA_RPC_URL);
-    const oracle = new ethers.Contract(addr, [
-      "function latestPrice() view returns (uint256)",
-    ], provider);
+    const oracle = new ethers.Contract(addr, ORACLE_ADAPTER_ABI, provider);
 
     const fetch = async () => {
       try {
         const raw: bigint = await oracle.latestPrice();
         if (cancelled) return;
-        if (raw > 0n) setPrice(Number(raw) / 1e8);
-      } catch (e) {
+        const usd = Number(raw) / 1e8;
+        if (usd > 0) {
+          setPrice(usd);
+          setHistory((prev) => {
+            const next = [...prev, { t: Date.now(), p: usd }];
+            return next.slice(-300);
+          });
+        }
+      } catch {
         // silent
       }
     };
@@ -38,7 +50,7 @@ export function useOraclePrice(_pair: string, pollInterval = 3000): number | nul
     return () => { cancelled = true; clearInterval(interval); };
   }, [_pair, pollInterval]);
 
-  return price;
+  return { price, history };
 }
 
 export function useProtocolStats(pollInterval = 5000) {
@@ -65,11 +77,11 @@ export function useProtocolStats(pollInterval = 5000) {
         ]);
         if (cancelled) return;
         setStats({
-          totalVolume: Number(ethers.formatUnits(vol, 18)),
+          totalVolume: Number(vol) / 1e6,
           activePairs: 3,
           markPrice: Number(markPrice) / 1e8,
         });
-      } catch (e) {
+      } catch {
         // silent
       }
     };

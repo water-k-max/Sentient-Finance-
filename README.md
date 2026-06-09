@@ -4,7 +4,7 @@
 
 ![Trading Dashboard](https://img.shields.io/badge/Somnia-Agentathon-00E5FF?style=for-the-badge)
 ![Tests](https://img.shields.io/badge/tests-65%20passing-00E676?style=for-the-badge)
-![Contracts](https://img.shields.io/badge/contracts-10%20deployed-00E5FF?style=for-the-badge)
+![Contracts](https://img.shields.io/badge/contracts-16%20deployed-00E5FF?style=for-the-badge)
 ![Multi-Pair](https://img.shields.io/badge/pairs-BTC%20%7C%20ETH%20%7C%20SOL-8B5CF6?style=for-the-badge)
 
 ---
@@ -50,16 +50,22 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 │                     PerpEngine.sol (multi-pair)                  │
 │              BTC-USD │ ETH-USD │ SOL-USD │ Funding               │
 ├──────────────┬─────────────────────┬────────────────────────────┤
-│ OrderBook.sol│   MarginVault.sol   │    OracleAdapter.sol        │
-│  (per-pair)  │   (Clearinghouse)   │   (Mock / Live)             │
+│ OrderBook.sol│   MarginVault.sol   │   SentimentOracle.sol      │
+│  (per-pair)  │   (Clearinghouse)   │  (3-agent AI oracle)       │
 ├──────────────┴─────────────────────┴────────────────────────────┤
 │                     AgentInterface.sol                           │
 │                (Reactive Gateway)                                │
-├──────────────────────────────┬──────────────────────────────────┤
-│  LiquidationSentinel.sol     │  LiquidityProviderAgent.sol      │
-│  (Auto-liquidate agent)      │  (Auto-LP agent)                 │
-├──────────────────────────────┴──────────────────────────────────┤
-│  AgentOracle.sol ──→ Somnia JSON API Agent → CoinGecko API      │
+├────────────────────────────────┬────────────────────────────────┤
+│  LiquidationSentinel.sol       │  LiquidityProviderAgent.sol    │
+│  (Auto-liquidate agent)        │  (Base LP agent)               │
+├────────────────────────────────┼────────────────────────────────┤
+│  EnhancedLiquidityProviderAgent │  SentimentOracle.sol           │
+│  (AI-augmented LP agent)       │  (reads: consensusPrice,       │
+│                                 │   sentiment, volatilityScore)  │
+├────────────────────────────────┴────────────────────────────────┤
+│  SentimentOracle ──→ Agent 1: JSON API (CoinGecko)              │
+│                  ──→ Agent 2: LLM Parse Website (CoinDesk)       │
+│                  ──→ Agent 3: LLM Inference (Sentiment + Vol)    │
 │  OrderBookFactory.sol ──→ deploys per-pair OrderBooks            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -71,14 +77,19 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 | `OrderBook.sol` | Heap-based order matching (max-heap bids, min-heap asks) | `placeOrder`, `cancelOrder`, `_attemptMatch`, `getOrderBookDepth` |
 | `OrderBookFactory.sol` | Deploys isolated OrderBook per trading pair | `createOrderBook`, `getAllPairs`, `pairOrderBooks` |
 | `MarginVault.sol` | Collateral management, PnL, liquidation enforcement | `deposit`, `settlePosition`, `updatePnL`, `updateAllPnL`, `liquidate` |
-| `PerpEngine.sol` | Multi-pair coordinator, funding rates, VWAP mark price | `registerPair`, `openPosition(pairId)`, `computeFundingRate(pairId)` |
-| `OracleAdapter.sol` | Price feed wrapper (Chainlink/Protofire/mock) | `updatePrice`, `updatePriceDirect`, `getIndexPrice` |
+| `PerpEngine.sol` | Multi-pair coordinator, funding rates, VWAP mark price | `registerPair`, `openPosition(pairId)`, `computeFundingRate(pairId)`, `recordFill` |
+| `OracleAdapter.sol` | Price feed wrapper (deprecated, kept for tests) | `updatePrice`, `updatePriceDirect`, `getIndexPrice` |
+| `SomniaPriceOracle.sol` | Keeper-median price oracle with circuit breaker | `submitPrice`, `getConsensusPrice` |
+| `CompositeOracle.sol` | Single entry point selecting price source | `getPrice` |
 | `AgentOracle.sol` | Somnia JSON API Agent → CoinGecko live BTC/USD | `requestPrice{deposit}()`, `handleResponse()` async callback |
-| `AgentInterface.sol` | Reactive event gateway, wires Sentinel + LP Agent | `subscribe`, `onEvent`, `simulatePriceUpdate` |
+| `SentimentOracle.sol` | **Multi-agent oracle** using all 3 Somnia agents | `requestApiPrice`, `requestWebsitePrice`, `analyzeSentiment`, `computeVolatilityScore` |
+| `AgentInterface.sol` | Reactive event gateway, 5-step cascade | `subscribe`, `onEvent`, `_executeCascade` (PnL → Sentinel → LP → Enhanced LP → event) |
 | `LiquidationSentinel.sol` | Autonomous liquidation agent | `checkAllPositions`, `liquidatePosition`, reverse-iterate trackedTraders |
-| `LiquidityProviderAgent.sol` | Autonomous market-making agent | `initialize`, `rebalance`, adaptive spread on volatility |
+| `LiquidityProviderAgent.sol` | Base autonomous market-making agent | `initialize`, `rebalance`, adaptive spread on volatility |
+| `EnhancedLiquidityProviderAgent.sol` | **AI-augmented LP** using sentiment + volatility | `rebalance`, `onSentimentUpdate`, `onVolatilityUpdate`, `_computeEffectiveSpread` |
 | `MockPriceFeed.sol` | Admin-controlled price feed for testing | `updatePrice` |
 | `MockUSDC.sol` | 6-decimal USDC mock for collateral (OpenZeppelin ERC20) | `mint`, `approve`, `transfer` |
+| `KeeperRegistry.sol` | Authorized keeper set with bonding/slashing | `registerKeeper`, `slashKeeper` |
 
 ## Agent Design
 
@@ -87,15 +98,23 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 - **Action:** Iterates all tracked positions in reverse, calls `liquidate()` on any with health < 5%
 - **Result:** Positions are liquidated autonomously — no MEV bot needed
 
-### Liquidity Provider Agent
-- **Trigger:** Price moves > 1% from last mid-price (via reactive cascade)
+### Liquidity Provider Agent (Base)
+- **Trigger:** Price moves > 1% from last mid-price (via reactive cascade, step 3)
 - **Action:** Cancels stale orders, places new bid/ask pair at mid ± spread
 - **Adaptive:** Widens spread during high volatility (5+ consecutive >1% moves)
 
-### AgentOracle (Somnia JSON API Agent)
-- **Trigger:** User calls `requestPrice()` with 0.12 STT deposit
-- **Action:** Creates async request to CoinGecko API via Somnia's JSON API Agent
-- **Callback:** `handleResponse()` decodes price → emits `PriceUpdated` → triggers full reactive cascade
+### Enhanced Liquidity Provider Agent (AI-Augmented)
+- **Trigger:** Same price cascade (step 4), plus sentiment/volatility signal from SentimentOracle
+- **Formula:** `effectiveSpread = baseSpread × (1 + volatilityScore/100) × sentimentMultiplier`
+- **Sentiment mapping:** bullish → 0.8x (tighten), neutral → 1.0x, bearish → 2.0x (widen)
+- **Result:** Spread dynamically adjusts based on decentralized AI analysis
+
+### SentimentOracle (Multi-Agent Oracle)
+Integrates **all three** Somnia agent types to produce an AI-augmented price feed:
+- **Agent 1:** JSON API — fetches BTC/USD from CoinGecko (`apiPrice`)
+- **Agent 2:** LLM Parse Website — extracts BTC price from CoinDesk (`websitePrice`)
+- **Agent 3:** LLM Inference — analyzes sentiment (`bullish/bearish/neutral`) and scores volatility (0–100)
+- **Consensus:** `_checkDivergence()` compares both prices — if divergence < 1%, averages them; otherwise uses the lower price (conservative)
 - **This is the core "contract takes action with data returned by the agent" use case**
 
 ## Zero Keeper Proof
@@ -105,7 +124,8 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 | Order matching | Keeper bot monitors mempool | Reactive `_attemptMatch()` fires on `OrderPlaced` event |
 | Liquidations | MEV bots scan positions | Sentinel checks reactively on price update |
 | Market making | Off-chain MM algorithms | LP Agent rebalances on-chain via reactive trigger |
-| Price updates | Chainlink Automation / cron | OracleAdapter/AgentOracle → reactive PnL cascade |
+| Price updates | Chainlink Automation / cron | SentimentOracle → reactive PnL cascade |
+| Sentiment analysis | Off-chain ML API | LLM Inference Agent → deterministic on-chain AI |
 
 **No off-chain script. No cron job. No Chainlink Automation. No keeper EOA.**
 
@@ -201,13 +221,15 @@ graph deploy --node https://api.thegraph.com/deploy/ --ipfs https://api.thegraph
 
 ## Somnia Agent Integration
 
-Sentient Finance integrates with Somnia's decentralized AI agents:
+Sentient Finance integrates with **all three** Somnia decentralized AI agent types via `SentimentOracle.sol`:
 
-- **JSON API Agent** (`agentId: 13174292974160097713`, 0.03 STT) — AgentOracle fetches live CoinGecko BTC/USD
-- **LLM Inference Agent** (`agentId: 12847293847561029384`, 0.07 STT) — Future: sentiment-based spread adjustment for LP Agent
-- **LLM Parse Website Agent** (`agentId: 12875401142070969085`, 0.10 STT) — Future: extract prices from financial news sites
+- **JSON API Agent** (`agentId: 13174292974160097713`, 0.03 STT) — Fetches live BTC/USD from CoinGecko API. Uses `fetchUint()` with Majority consensus (3 of 3 validators must agree).
+- **LLM Parse Website Agent** (`agentId: 12875401142070969085`, 0.10 STT) — Visits CoinDesk homepage and extracts BTC price using LLM vision. Uses `extractANumber()` with Threshold consensus (2 of 3).
+- **LLM Inference Agent** (`agentId: 12847293847561029384`, 0.07 STT) — Two independent calls: `inferString()` for sentiment analysis (bullish/bearish/neutral, temp=0) and `inferNumber()` for volatility scoring (0–100). Deterministic — all 3 validators produce byte-identical output.
 
-All agent calls use the **two-pot gas model**: `getRequestDeposit() + pricePerAgent × subcommitteeSize`
+All agent calls use the **two-pot gas model**: `getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE) + pricePerAgent × SUBCOMMITTEE_SIZE`
+
+The `AgentDashboard` page polls `SentimentOracle` every 5 seconds and displays the live status of all three agents, the consensus price, and the resulting Enhanced LP Agent spread adjustment.
 
 ## Test Coverage
 

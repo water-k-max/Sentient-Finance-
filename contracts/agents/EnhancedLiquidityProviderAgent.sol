@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IOrderBook} from "../interfaces/IOrderBook.sol";
+import {IOrderBook, Order} from "../interfaces/IOrderBook.sol";
 import {IMarginVault} from "../interfaces/IMarginVault.sol";
 import {SentimentOracle} from "../oracles/SentimentOracle.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -95,7 +95,7 @@ contract EnhancedLiquidityProviderAgent {
         orderSizeUSDC = _orderSizeUSDC;
         lastMidPrice = initialMidPrice;
 
-        uint256 depositAmount = _orderSizeUSDC * 2;
+        uint256 depositAmount = _orderSizeUSDC * 10;
 
         // Approve vault to pull collateral from this contract, then deposit.
         collateralToken.forceApprove(address(marginVault), depositAmount);
@@ -115,11 +115,17 @@ contract EnhancedLiquidityProviderAgent {
         _refreshOracleData();
 
         if (activeBidExists) {
-            orderBook.cancelOrder(activeBidOrderId);
+            Order memory bidOrder = orderBook.getOrder(activeBidOrderId);
+            if (uint(bidOrder.status) == 0 || uint(bidOrder.status) == 1) { // OPEN or PARTIALLY_FILLED
+                orderBook.cancelOrder(activeBidOrderId);
+            }
             activeBidExists = false;
         }
         if (activeAskExists) {
-            orderBook.cancelOrder(activeAskOrderId);
+            Order memory askOrder = orderBook.getOrder(activeAskOrderId);
+            if (uint(askOrder.status) == 0 || uint(askOrder.status) == 1) { // OPEN or PARTIALLY_FILLED
+                orderBook.cancelOrder(activeAskOrderId);
+            }
             activeAskExists = false;
         }
 
