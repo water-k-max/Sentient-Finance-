@@ -157,6 +157,8 @@ Show AgentDashboard → SentimentOracle data populated → Enhanced LP spread dy
 
 The entire system operates in a single reactive transaction, triggered by a `PriceUpdated` event:
 
+**Note:** The price update that triggers this cascade currently comes from an off-chain script (`priceFeed.ts`). Somnia's JSON API Agent is the intended decentralized source but has 30-120s latency — viable for periodic verification, not real-time trading.
+
 ```
 Step 0: PriceUpdated event emitted (from any oracle source)
   ↓
@@ -173,15 +175,3 @@ _executeCascade(newPrice):
 Each step is isolated in a `try/catch` so one failure never blocks the rest. Steps 4 and 5 only run if the corresponding contracts are configured.
 
 ---
-
-## Zero Keeper Proof
-
-| Component | Traditional Approach | Sentient Finance |
-|-----------|---------------------|------------------|
-| Order matching | Keeper bot monitors mempool | `_attemptMatch()` fires on `OrderPlaced` event |
-| Liquidations | MEV bots scan positions | Sentinel checks reactively on price update |
-| Market making | Off-chain MM algorithms | LP Agent rebalances via reactive trigger |
-| Price updates | Chainlink Automation / cron | SentimentOracle → reactive PnL cascade |
-| Sentiment analysis | Off-chain ML API | LLM Inference Agent → deterministic on-chain AI |
-
-**No off-chain script. No cron job. No Chainlink Automation. No keeper EOA.**

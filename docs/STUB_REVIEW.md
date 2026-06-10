@@ -15,10 +15,12 @@
 | `SentimentOracle.sol` | ✅ Complete | Multi-agent oracle using all 3 Somnia Agent types |
 | `MockPriceFeed.sol` | ✅ Complete | Admin-controlled price — intentional mock for testing |
 | `OracleAdapter.sol` | ✅ Complete | Wraps mock or live feeds, emits PriceUpdated — functional |
-| All 65 tests | ✅ Complete | Including property-based and invariant tests |
+| All 77 tests | ✅ Complete | Including property-based and invariant tests |
 | Frontend UI | ✅ Complete | All pages build and render, Recharts charts work |
 | **Frontend → Contracts** | ✅ **Wired** | `useOrderBook`, `usePosition`, `useOraclePrice`, `useProtocolStats`, `useWallet`, `useTrade`, `useEventFeed` — all poll live contracts |
 | **PerpEngine.closePosition** | ✅ **Implemented** | Places opposing order via OrderBook |
+| **PerpEngine.setIndexPrice** | ❌ **No access control** | Anyone can set any pair's index price |
+| **PerpEngine.recordFill** | ❌ **No access control** | Anyone can inject fake VWAP fill data |
 
 ### ⚠️ Stub/Mock (Needs Real Implementation)
 | Component | Current State | What's Needed |
@@ -29,6 +31,9 @@
 | **Subgraph deployment** | Schema + manifest + mappings created | Deploy to Graph Node + IPFS, update subgraph.yaml with real contract addresses |
 | **PerpEngine.applyFunding** | Updates timestamp, emits event | Iterate positions, transfer funding between longs and shorts |
 | **Enhanced LP Agent per-pair** | Only deployed for BTC-USD | Deploy for ETH-USD and SOL-USD |
+| **Self-match heap cleanup** | Swaps self-order to heap back without re-heapify | Orders can be silently lost |
+| **PerpEngine.setIndexPrice** | No access control | Add `onlyOwner` modifier |
+| **PerpEngine.recordFill** | No access control | Add `onlyAuthorized` check |
 
 ### 📋 Stub Details — Line by Line
 
@@ -93,7 +98,7 @@ All major frontend hooks now poll deployed contracts via ethers.js:
 | Criterion | Status | Gap |
 |-----------|--------|-----|
 | Smart contracts deployed | ✅ Deployed on Somnia testnet | 16 contracts live |
-| Tests passing | ✅ 65/65 | Including property-based + invariant |
+| Tests passing | ✅ 77/77 | Including property-based + invariant |
 | Frontend works | ✅ Builds and renders | **Wired to live contracts** — reads all on-chain data |
 | Reactive cascade works | ✅ Wired and tested | Verified in integration tests |
 | Agent integration | ⚠️ Contract ready, not funded | Needs `SOMNIA_AGENTS_PLATFORM_ADDRESS` + STT funding |

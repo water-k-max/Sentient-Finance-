@@ -1,9 +1,9 @@
 # Sentient Finance
 
-> **A Fully On-Chain Reactive Perpetual Matching Engine for AI Agents**
+> **A Reactive Perpetual Matching Engine on Somnia L1 — Eliminating Keeper-Dependent Liquidations and Order Matching**
 
-![Trading Dashboard](https://img.shields.io/badge/Somnia-Agentathon-00E5FF?style=for-the-badge)
-![Tests](https://img.shields.io/badge/tests-65%20passing-00E676?style=for-the-badge)
+![Somnia Agentathon](https://img.shields.io/badge/Somnia-Agentathon-00E5FF?style=for-the-badge)
+![Tests](https://img.shields.io/badge/tests-77%20passing-00E676?style=for-the-badge)
 ![Contracts](https://img.shields.io/badge/contracts-16%20deployed-00E5FF?style=for-the-badge)
 ![Multi-Pair](https://img.shields.io/badge/pairs-BTC%20%7C%20ETH%20%7C%20SOL-8B5CF6?style=for-the-badge)
 
@@ -20,7 +20,7 @@ Traditional perpetual DEXes (dYdX, GMX, Hyperliquid) all share a critical weakne
 
 ## The Somnia Solution
 
-Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execution layer**, every event (new order, price update) automatically triggers the appropriate on-chain action **within the same block** — no external caller needed.
+Sentient Finance moves liquidation and order matching on-chain via **Somnia's reactive execution layer** — eliminating the keeper bot infrastructure for those operations. Price discovery depends on external feeds, reducing the MEV blast radius but not eliminating it entirely.
 
 ```
 [New Order Event] → [Somnia Reactive Layer] → [_attemptMatch() called] → [Position Opened]
@@ -30,13 +30,26 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 [LP Agent Reacts] → [Rebalance orders at new mid-price]
 ```
 
-**All within a single block. Zero off-chain scripts. Zero MEV bots. Pure on-chain autonomy.**
+**Liquidations and order matching fire within the same block as the triggering event — no external caller needed for those steps.**
 
 ### Why Somnia?
 
 - **MultiStream BFT consensus** — sub-second finality enables reactive patterns impossible on other EVMs
 - **IceDB state layer** — efficient state access makes iterating all positions gas-feasible
-- **Reactive extensions** — contracts subscribe to events and auto-execute, no keeper needed
+- **Reactive extensions** — contracts subscribe to events and auto-execute
+
+### Honest Dependency Map
+
+| Operation | On-Chain (Reactive) | Off-Chain Dependency |
+|-----------|-------------------|---------------------|
+| Order matching | `_attemptMatch()` fires on `OrderPlaced` event | None |
+| Liquidations | `LiquidationSentinel` checks on every `PriceUpdated` | None |
+| Market making | `LiquidityProviderAgent` rebalances reactively | None |
+| Price updates (fast) | Pushed via `MockPriceFeed` | `priceFeed.ts` script fetches CoinGecko (~3s interval) |
+| Price updates (decentralized) | `SentimentOracle` via 3 Somnia agents | Somnia validator subcommittee (~30-120s latency) |
+| Sentiment analysis | `LLM Inference Agent` on-chain | None (deterministic, temp=0) |
+
+**The price feed is our honest external dependency — we're betting on Somnia's agent platform security rather than trusting a centralized oracle operator.**
 
 ## Architecture
 
@@ -77,11 +90,11 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 | `OrderBook.sol` | Heap-based order matching (max-heap bids, min-heap asks) | `placeOrder`, `cancelOrder`, `_attemptMatch`, `getOrderBookDepth` |
 | `OrderBookFactory.sol` | Deploys isolated OrderBook per trading pair | `createOrderBook`, `getAllPairs`, `pairOrderBooks` |
 | `MarginVault.sol` | Collateral management, PnL, liquidation enforcement | `deposit`, `settlePosition`, `updatePnL`, `updateAllPnL`, `liquidate` |
-| `PerpEngine.sol` | Multi-pair coordinator, funding rates, VWAP mark price | `registerPair`, `openPosition(pairId)`, `computeFundingRate(pairId)`, `recordFill` |
+| `PerpEngine.sol` | Multi-pair coordinator, funding rates, VWAP mark price | `registerPair`, `openPosition`, `computeFundingRate`, `recordFill` |
 | `OracleAdapter.sol` | Price feed wrapper (deprecated, kept for tests) | `updatePrice`, `updatePriceDirect`, `getIndexPrice` |
 | `SomniaPriceOracle.sol` | Keeper-median price oracle with circuit breaker | `submitPrice`, `getConsensusPrice` |
 | `CompositeOracle.sol` | Single entry point selecting price source | `getPrice` |
-| `AgentOracle.sol` | Somnia JSON API Agent → CoinGecko live BTC/USD | `requestPrice{deposit}()`, `handleResponse()` async callback |
+| `AgentOracle.sol` | Somnia JSON API Agent → CoinGecko live BTC/USD | `requestPrice`, `handleResponse` async callback |
 | `SentimentOracle.sol` | **Multi-agent oracle** using all 3 Somnia agents | `requestApiPrice`, `requestWebsitePrice`, `analyzeSentiment`, `computeVolatilityScore` |
 | `AgentInterface.sol` | Reactive event gateway, 5-step cascade | `subscribe`, `onEvent`, `_executeCascade` (PnL → Sentinel → LP → Enhanced LP → event) |
 | `LiquidationSentinel.sol` | Autonomous liquidation agent | `checkAllPositions`, `liquidatePosition`, reverse-iterate trackedTraders |
@@ -96,7 +109,7 @@ Sentient Finance eliminates the keeper entirely. Using **Somnia's reactive execu
 ### Liquidation Sentinel
 - **Trigger:** Oracle price update → `AgentInterface.onEvent` → `updateAllPnL`
 - **Action:** Iterates all tracked positions in reverse, calls `liquidate()` on any with health < 5%
-- **Result:** Positions are liquidated autonomously — no MEV bot needed
+- **Result:** Positions are liquidated autonomously — no MEV bot needed for liquidation detection
 
 ### Liquidity Provider Agent (Base)
 - **Trigger:** Price moves > 1% from last mid-price (via reactive cascade, step 3)
@@ -116,18 +129,6 @@ Integrates **all three** Somnia agent types to produce an AI-augmented price fee
 - **Agent 3:** LLM Inference — analyzes sentiment (`bullish/bearish/neutral`) and scores volatility (0–100)
 - **Consensus:** `_checkDivergence()` compares both prices — if divergence < 1%, averages them; otherwise uses the lower price (conservative)
 - **This is the core "contract takes action with data returned by the agent" use case**
-
-## Zero Keeper Proof
-
-| Component | Traditional Approach | Sentient Finance |
-|-----------|---------------------|------------------|
-| Order matching | Keeper bot monitors mempool | Reactive `_attemptMatch()` fires on `OrderPlaced` event |
-| Liquidations | MEV bots scan positions | Sentinel checks reactively on price update |
-| Market making | Off-chain MM algorithms | LP Agent rebalances on-chain via reactive trigger |
-| Price updates | Chainlink Automation / cron | SentimentOracle → reactive PnL cascade |
-| Sentiment analysis | Off-chain ML API | LLM Inference Agent → deterministic on-chain AI |
-
-**No off-chain script. No cron job. No Chainlink Automation. No keeper EOA.**
 
 ## Multi-Pair Support
 
@@ -156,7 +157,7 @@ cd frontend && npm install && cd ..
 cp .env.example .env
 # Add your PRIVATE_KEY and SOMNIA_RPC_URL
 
-# 4. Run tests (65 passing)
+# 4. Run tests (77 passing)
 npx hardhat test
 
 # 5. Deploy to local Hardhat node
@@ -166,40 +167,46 @@ npx hardhat run scripts/deploy.ts --network localhost
 # 6. Deploy to Somnia testnet
 npx hardhat run scripts/deploy.ts --network somnia
 
-# 7. Full demo setup (deploy → seed → push price)
-npx hardhat run scripts/demoSetup.ts --network somnia
+# 7. Sync address files after deploy
+npx hardhat run scripts/sync-addresses.ts
 
-# 8. Update price + LP agent rebalance (run anytime)
-npx hardhat run scripts/updatePrice.ts --network somnia
+# 8. Run one-shot demo (seed → open position → crash → liquidate)
+npx hardhat run scripts/demoFullFlow.ts --network somnia
 
-# 9. Standalone liquidation demo
-npx hardhat run scripts/demoLiquidation.ts --network somnia
+# 9. Or run continuous price feed + demo flow in separate terminals:
+npx hardhat run scripts/priceFeed.ts --network somnia   # terminal 1
+npx hardhat run scripts/demoFullFlow.ts --network somnia # terminal 2
 
 # 10. Start frontend
 npm run dev --prefix frontend
 ```
 
-## Testnet Contracts
+## Deployed Contracts
 
-| Contract | Address | Explorer |
-|----------|---------|----------|
-| MockUSDC | `0x8D06699a029869f88437ecb10736B57306D3953F` | [View](https://explorer.testnet.somnia.network/address/0x8D06699a029869f88437ecb10736B57306D3953F) |
-| MockPriceFeed | `0xfFcfbe79bAe362734bE77712a34b9Fb35fa86680` | [View](https://explorer.testnet.somnia.network/address/0xfFcfbe79bAe362734bE77712a34b9Fb35fa86680) |
-| OracleAdapter | `0xA159BE1397c49f8Bb662E1ae7E9477BeAf9899c1` | [View](https://explorer.testnet.somnia.network/address/0xA159BE1397c49f8Bb662E1ae7E9477BeAf9899c1) |
-| MarginVault | `0x2396207Bfe22190E0d8B8A511E9Ceae7d4E3f15D` | [View](https://explorer.testnet.somnia.network/address/0x2396207Bfe22190E0d8B8A511E9Ceae7d4E3f15D) |
-| OrderBookFactory | `0xae27803c296916eE36A83220670eB918cAE4BcA5` | [View](https://explorer.testnet.somnia.network/address/0xae27803c296916eE36A83220670eB918cAE4BcA5) |
-| BTC-USD OrderBook | `0x3B10165FD2490575fD514BE52cCCcAd57b3a284e` | [View](https://explorer.testnet.somnia.network/address/0x3B10165FD2490575fD514BE52cCCcAd57b3a284e) |
-| ETH-USD OrderBook | `0xddFBCae15030fF8b23CAd5F4598e7f7801F8A2f9` | [View](https://explorer.testnet.somnia.network/address/0xddFBCae15030fF8b23CAd5F4598e7f7801F8A2f9) |
-| SOL-USD OrderBook | `0x51B411C22daaBc6130600e4c86cCe1Fac3E588CC` | [View](https://explorer.testnet.somnia.network/address/0x51B411C22daaBc6130600e4c86cCe1Fac3E588CC) |
-| PerpEngine | `0x67bae6CA52fAEeB93C1cABAD9C5821A25124F871` | [View](https://explorer.testnet.somnia.network/address/0x67bae6CA52fAEeB93C1cABAD9C5821A25124F871) |
-| LiquidationSentinel | `0xDBB064C78d0d42527a702fFe4d9e8F359f58FB8D` | [View](https://explorer.testnet.somnia.network/address/0xDBB064C78d0d42527a702fFe4d9e8F359f58FB8D) |
-| LiquidityProviderAgent | `0x1Ed3f6994C66aBCd142cEF939D7A50B518fD4246` | [View](https://explorer.testnet.somnia.network/address/0x1Ed3f6994C66aBCd142cEF939D7A50B518fD4246) |
-| AgentInterface | `0x7C07f58CBF26Ae5FFaEBB277A30283935E5E499F` | [View](https://explorer.testnet.somnia.network/address/0x7C07f58CBF26Ae5FFaEBB277A30283935E5E499F) |
-| AgentOracle | `0x65E02f9D13A8D8E35e5D7e9f62Ae90dcA38140b2` | [View](https://explorer.testnet.somnia.network/address/0x65E02f9D13A8D8E35e5D7e9f62Ae90dcA38140b2) |
-| SentimentOracle | `0xFCd8440d2097B7297A9c0944B7Bd448D9D4dCB2f` | [View](https://explorer.testnet.somnia.network/address/0xFCd8440d2097B7297A9c0944B7Bd448D9D4dCB2f) |
-| EnhancedLPAgent | `0x5e9f53f52C7368C6c857e38e4ED2560cB29dfBF4` | [View](https://explorer.testnet.somnia.network/address/0x5e9f53f52C7368C6c857e38e4ED2560cB29dfBF4) |
+Addresses are tracked in `deployed-addresses.json` (canonical source) and auto-synced to `scripts/addresses.ts` and `frontend/src/config/addresses.ts` via `npm run sync-addresses`.
 
-Deployed on Somnia testnet. Addresses are tracked in `scripts/addresses.ts` (canonical) and `frontend/src/config/addresses.ts` (frontend copy).
+See [`deployed-addresses.json`](./deployed-addresses.json) for the current testnet addresses.
+
+## Demo Flow
+
+The quickest way to see the full system in action:
+
+```bash
+npm run demo
+```
+
+This runs `demoFullFlow.ts` which:
+1. Fetches live BTC price from CoinGecko, pushes it on-chain
+2. Clears stale orders via the factory, seeds the book through the LP agent
+3. Funds a wallet and opens a leveraged long against the LP agent's ask
+4. Verifies the position is open with correct health
+5. Crashes the price 12% below entry — crossing the liquidation threshold
+6. Fires the reactive cascade via `simulatePriceUpdate`
+7. Verifies `LiquidationExecuted` event fired and position closed
+
+**All within a single script. No manual step between seeding, matching, and liquidation.**
+
+See [`docs/PITCH_DEMO_SCRIPT.md`](./docs/PITCH_DEMO_SCRIPT.md) for the full demo transcript and video script.
 
 ## The Graph Subgraph
 
@@ -227,23 +234,40 @@ Sentient Finance integrates with **all three** Somnia decentralized AI agent typ
 - **LLM Parse Website Agent** (`agentId: 12875401142070969085`, 0.10 STT) — Visits CoinDesk homepage and extracts BTC price using LLM vision. Uses `extractANumber()` with Threshold consensus (2 of 3).
 - **LLM Inference Agent** (`agentId: 12847293847561029384`, 0.07 STT) — Two independent calls: `inferString()` for sentiment analysis (bullish/bearish/neutral, temp=0) and `inferNumber()` for volatility scoring (0–100). Deterministic — all 3 validators produce byte-identical output.
 
-All agent calls use the **two-pot gas model**: `getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE) + pricePerAgent × SUBCOMMITTEE_SIZE`
+All agent calls use the **two-pot gas model**: `getAdvancedRequestDeposit(SUBCOMMITTEE_SIZE) + pricePerAgent × SUBCOMMITTEE_SIZE` (~0.69 STT per full cycle).
+
+**Note:** Agent callbacks have 30-120 second latency on testnet — suitable for periodic price verification, not real-time trading. The `priceFeed.ts` script handles sub-second updates.
 
 The `AgentDashboard` page polls `SentimentOracle` every 5 seconds and displays the live status of all three agents, the consensus price, and the resulting Enhanced LP Agent spread adjustment.
 
 ## Test Coverage
 
-**65 tests passing** across 7 test suites:
+**77 tests passing** across 9 test suites:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
 | `OrderBook.test.ts` | 10 | Placement, matching, partial fills, heap ordering, cancellation, depth |
+| `OrderBookFactory.test.ts` | 11 | Deployment, createOrderBook, adminClearBook passthrough (success, missing pair, non-owner, margin release, empty book) |
 | `MarginVault.test.ts` | 7 | Deposits, liquidation prices, withdrawals, authorization |
-| `LiquidationSentinel.test.ts` | 4 | Position checks, pause/unpause, liquidation guards |
-| `AgentIntegration.test.ts` | 5 | Reactive order flow, price updates, LP rebalance, full cascade liquidation |
-| `AgentOracle.test.ts` | 7 | Deployment, constants, view functions, agent ID verification |
 | `MarginVault.property.test.ts` | 5 | Fast-check: liq price invariants, monotonicity (100+ property runs each) |
 | `OrderBook.invariant.test.ts` | 27 | Fast-check: heap ordering, ID monotonicity, margin non-negative fuzz (2300+ runs) |
+| `LiquidationSentinel.test.ts` | 4 | Position checks, pause/unpause, liquidation guards |
+| `AgentIntegration.test.ts` | 6 | Reactive order flow, price updates, LP rebalance (including filled-order regression), full cascade liquidation |
+| `AgentOracle.test.ts` | 7 | Deployment, constants, view functions, agent ID verification |
+| `SentimentOracle.test.ts` | 18 | Deployment, constants, CoinGecko/CoinDesk config, divergence threshold, sentiment values |
+
+Includes **property-based tests** (fast-check) for heap ordering invariants and liquidation price correctness.
+
+## Known Limitations (See docs/KNOWN_ISSUES.md)
+
+- **PerpEngine.setIndexPrice()** has no access control (testnet-safe, critical fix needed before mainnet)
+- **Self-match heap corruption** risk in OrderBook._attemptMatch()
+- **9 of 16 contracts** have no direct unit tests (only integration test coverage)
+- **O(n) liquidation gas** scales with number of open positions
+- **Frontend hooks** have minor bugs (useEventFeed ignores _pair param)
+- **Some scripts** reference contract address keys not in deployed-addresses.json
+
+See [`docs/KNOWN_ISSUES.md`](./docs/KNOWN_ISSUES.md) for the full inventory.
 
 ## Tech Stack
 

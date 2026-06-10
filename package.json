@@ -12,7 +12,7 @@
     "test:coverage": "hardhat coverage",
     "sync-addresses": "hardhat run scripts/sync-addresses.ts",
     "predeploy": "hardhat run scripts/check-deploy.ts",
-    "demo": "hardhat run scripts/demoFullFlow.ts"
+    "demo": "hardhat run scripts/demoFullFlow.ts --network somnia"
   },
   "keywords": [],
   "author": "",

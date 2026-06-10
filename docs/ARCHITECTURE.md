@@ -2,7 +2,7 @@
 
 ## System Overview
 
-Sentient Finance is a fully on-chain perpetual swap matching engine that uses Somnia's reactive execution layer to operate without any off-chain keeper infrastructure.
+Sentient Finance is a perpetual swap matching engine that uses Somnia's reactive execution layer to eliminate keeper-dependent liquidations and order matching. Price discovery depends on external feeds (off-chain script or Somnia agents) — the MEV blast radius around liquidations and order matching is removed, not the entire off-chain dependency surface.
 
 ## Contract Dependency Graph
 
@@ -141,3 +141,4 @@ On Somnia's MultiStream consensus with IceDB, these costs are significantly lowe
 3. **Re-entrancy safe** — No external calls during state mutations
 4. **Overflow protected** — Solidity 0.8.x native checks + explicit `unchecked` where safe
 5. **Cascade isolation** — Each step in `_executeCascade()` is wrapped in `try/catch` so a single failing component never blocks the entire system
+6. **Liquidation is permissionless** — `LiquidationSentinel.liquidatePosition()` is callable by any address for underwater positions. This is intentional for redundancy, not a security gap.

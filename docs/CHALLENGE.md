@@ -63,9 +63,10 @@ because:
 
 ## Current Workaround
 
-`scripts/updatePrice.ts` — fetches CoinGecko prices off-chain via HTTP and pushes them on-chain
+`scripts/priceFeed.ts` — fetches CoinGecko prices off-chain via HTTP and pushes them on-chain
 via `MockPriceFeed.updatePrice()`. This takes ~1 second but is centralized (single caller)
-and not verifiable by validators.
+and not verifiable by validators. The `demoFullFlow.ts` script combines seeding, trading, and
+liquidation into a single command for the demo video.
 
 ## Questions for Somnia Team
 
@@ -104,6 +105,11 @@ and not verifiable by validators.
 | Somnia Agent (Threshold 2/3) | 30–120s | Decentralized but too slow for trading |
 | Hybrid: Mock for UI, Agents for verification | ~1s UI, 60s verification | Best of both worlds |
 | Pre-fetching + caching agent results | 0s display, 60s staleness | OK for demo, not for production |
+| `scripts/priceFeed.ts` for real-time push | ~3s | Off-chain script, single caller |
+
+## See Also
+- [`KNOWN_ISSUES.md`](./KNOWN_ISSUES.md) — complete deferred fix inventory
+- [`PITCH_DEMO_SCRIPT.md`](./PITCH_DEMO_SCRIPT.md) — demo video transcript
 
 ## Recommendation for Agentathon Demo
 
