@@ -125,12 +125,28 @@ async function main() {
       // but calling it here guarantees the book is populated even if onEvent
       // isn't firing autonomously yet on testnet.
       try {
-        await lpAgent.rebalance(priceWei);
-      } catch { /* silent */ }
+        const tx = await lpAgent.rebalance(priceWei);
+        const receipt = await tx.wait();
+        if (pushCount > 0 && pushCount % 10 === 0) {
+          console.log(`   [rebalance] base LP — nonce ${receipt?.nonce}`);
+        }
+      } catch (e: any) {
+        const msg = (e?.reason || e?.message || String(e)).slice(0, 120);
+        failCount++;
+        console.log(`   [rebalance] base LP failed (${failCount}): ${msg}`);
+      }
       if (enhancedLp) {
         try {
-          await enhancedLp.rebalance(priceWei);
-        } catch { /* silent */ }
+          const tx = await enhancedLp.rebalance(priceWei);
+          const receipt = await tx.wait();
+          if (pushCount > 0 && pushCount % 10 === 0) {
+            console.log(`   [rebalance] enhanced LP — nonce ${receipt?.nonce}`);
+          }
+        } catch (e: any) {
+          const msg = (e?.reason || e?.message || String(e)).slice(0, 120);
+          failCount++;
+          console.log(`   [rebalance] enhanced LP failed (${failCount}): ${msg}`);
+        }
       }
 
       const prevWei = lastPushWei;

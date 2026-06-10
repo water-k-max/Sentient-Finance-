@@ -8,7 +8,11 @@
     "test": "test"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "sync-addresses": "hardhat run scripts/sync-addresses.ts",
+    "predeploy": "hardhat run scripts/check-deploy.ts",
+    "demo": "hardhat run scripts/demoFullFlow.ts"
   },
   "keywords": [],
   "author": "",

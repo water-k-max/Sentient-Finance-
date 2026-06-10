@@ -116,14 +116,14 @@ contract EnhancedLiquidityProviderAgent {
 
         if (activeBidExists) {
             Order memory bidOrder = orderBook.getOrder(activeBidOrderId);
-            if (uint(bidOrder.status) == 0 || uint(bidOrder.status) == 1) { // OPEN or PARTIALLY_FILLED
+            if (uint(bidOrder.status) == 0 || uint(bidOrder.status) == 2) { // OPEN or PARTIALLY_FILLED
                 orderBook.cancelOrder(activeBidOrderId);
             }
             activeBidExists = false;
         }
         if (activeAskExists) {
             Order memory askOrder = orderBook.getOrder(activeAskOrderId);
-            if (uint(askOrder.status) == 0 || uint(askOrder.status) == 1) { // OPEN or PARTIALLY_FILLED
+            if (uint(askOrder.status) == 0 || uint(askOrder.status) == 2) { // OPEN or PARTIALLY_FILLED
                 orderBook.cancelOrder(activeAskOrderId);
             }
             activeAskExists = false;

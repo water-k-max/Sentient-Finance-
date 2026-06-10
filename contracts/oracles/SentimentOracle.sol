@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {IAgentRequester, IJsonApiAgent, Response, Request, ResponseStatus, ConsensusType} from "../interfaces/IAgentRequester.sol";
+
 /// @title SentimentOracle — Multi-agent oracle using all 3 Somnia Agents
 /// Integrates JSON API Agent (CoinGecko price), LLM Parse Website Agent
 /// (CoinDesk price extraction), and LLM Inference Agent (sentiment analysis
@@ -125,6 +127,7 @@ contract SentimentOracle {
 
         if (status == ResponseStatus.Success && responses.length > 0) {
             uint256 price = abi.decode(responses[0].result, (uint256));
+            require(price < 1e15, "SentimentOracle: price exceeds max");
             apiPrice = price;
             lastUpdated = block.timestamp;
             emit ApiPriceFetched(price, block.timestamp);
@@ -188,6 +191,7 @@ contract SentimentOracle {
 
         if (status == ResponseStatus.Success && responses.length > 0) {
             uint256 price = abi.decode(responses[0].result, (uint256));
+            require(price < 1e15, "SentimentOracle: price exceeds max");
             websitePrice = price;
             emit WebsitePriceExtracted(price, block.timestamp);
             _checkDivergence();
@@ -393,83 +397,6 @@ contract SentimentOracle {
     event WebsitePriceRequested(uint256 requestId);
     event SentimentRequested(uint256 requestId);
     event VolatilityRequested(uint256 requestId);
-}
-
-// ============ Somnia Agents Platform Interfaces ============
-
-interface IAgentRequester {
-    function createRequest(
-        uint256 agentId,
-        address callbackAddress,
-        bytes4 callbackSelector,
-        bytes calldata payload
-    ) external payable returns (uint256 requestId);
-
-    function createAdvancedRequest(
-        uint256 agentId,
-        address callbackAddress,
-        bytes4 callbackSelector,
-        bytes calldata payload,
-        uint256 subcommitteeSize,
-        uint256 threshold,
-        ConsensusType consensusType,
-        uint256 timeout
-    ) external payable returns (uint256 requestId);
-
-    function getRequestDeposit() external view returns (uint256);
-
-    function getAdvancedRequestDeposit(
-        uint256 subcommitteeSize
-    ) external view returns (uint256);
-}
-
-enum ConsensusType {
-    Majority,
-    Threshold
-}
-
-struct Response {
-    address validator;
-    bytes result;
-    ResponseStatus status;
-    uint256 receipt;
-    uint256 timestamp;
-    uint256 executionCost;
-}
-
-struct Request {
-    uint256 id;
-    address requester;
-    address callbackAddress;
-    bytes4 callbackSelector;
-    address[] subcommittee;
-    Response[] responses;
-    uint256 responseCount;
-    uint256 threshold;
-    uint256 createdAt;
-    uint256 deadline;
-    ResponseStatus status;
-    uint256 consensusType;
-    uint256 remainingBudget;
-    uint256 perAgentBudget;
-}
-
-enum ResponseStatus {
-    None,
-    Pending,
-    Success,
-    Failed,
-    TimedOut
-}
-
-// ============ JSON API Agent Interface ============
-
-interface IJsonApiAgent {
-    function fetchUint(
-        string calldata url,
-        string calldata selector,
-        uint8 decimals
-    ) external returns (uint256);
 }
 
 // ============ LLM Inference Agent Interface ============
