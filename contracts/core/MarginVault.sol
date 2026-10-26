@@ -159,9 +159,17 @@ contract MarginVault is IMarginVault, ReentrancyGuard {
         pos.margin = 0;
         pos.unrealizedPnl = 0;
 
-        // Release any locked margin entry back to vault balance
-        // (insurance fund logic: remaining margin stays in vault as buffer)
-        lockedMargin[trader] = 0;
+        // F-04 FIX: release ONLY the liquidated position's margin lock. The old
+        // code did `lockedMargin[trader] = 0`, which also destroyed margin the
+        // trader had locked for unrelated resting orders — those orders could then
+        // never be cancelled (releaseMargin reverts) and their collateral was
+        // stranded. The position's own margin is forfeited to the vault as an
+        // insurance buffer (not credited back to collateralBalances).
+        if (lockedMargin[trader] >= remainingMargin) {
+            lockedMargin[trader] -= remainingMargin;
+        } else {
+            lockedMargin[trader] = 0;
+        }
 
         _removeTrader(trader);
 
@@ -217,12 +225,13 @@ contract MarginVault is IMarginVault, ReentrancyGuard {
     }
 
     /// @notice Free margin = collateral balance not locked in open positions.
+    /// F-03 FIX: `collateralBalances` is ALREADY net of locked margin — both
+    /// lockMargin() and _openPosition() do `collateralBalances -= x; lockedMargin += x`.
+    /// The old code subtracted `lockedMargin` a second time, under-reporting free
+    /// margin by the full locked amount. That blocked legitimate withdrawals and
+    /// made _openPosition reject positions the trader could actually afford.
     function getFreeMargin(address trader) public view returns (uint256) {
-        // lockedMargin tracks exactly what is reserved for open positions
-        uint256 bal = collateralBalances[trader];
-        uint256 locked = lockedMargin[trader];
-        if (locked >= bal) return 0;
-        return bal - locked;
+        return collateralBalances[trader];
     }
 
     function computeLiquidationPrice(

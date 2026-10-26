@@ -55,7 +55,12 @@ contract KeeperRegistry {
         keepers[keeper].active = false;
         uint256 bond = keepers[keeper].bond;
         keepers[keeper].bond = 0;
-        payable(keeper).transfer(bond);
+        // F-13 FIX: `.transfer()` forwards only 2300 gas, which reverts for any
+        // contract keeper (multisig, smart wallet, staking contract) whose
+        // receive()/fallback() does real work — permanently stranding their bond.
+        // Use a low-level call and check success instead.
+        (bool ok, ) = payable(keeper).call{value: bond}("");
+        require(ok, "Reg: bond refund failed");
         emit KeeperRemoved(keeper);
     }
 

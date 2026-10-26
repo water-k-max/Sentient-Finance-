@@ -15,8 +15,11 @@ contract MockUSDC is ERC20, Ownable {
         return 6;
     }
 
-    // Anyone can mint on testnet — for faucet/demo purposes
-    function mint(address to, uint256 amount) external {
+    // F-06 FIX: mint is gated to the owner. This token is wired as the live
+    // collateral asset (deployed-addresses.json → mockUSDC); an open mint let
+    // anyone inflate their collateral balance and drain the vault. Test/demo
+    // faucets must mint through the deployer key.
+    function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
     }
 }

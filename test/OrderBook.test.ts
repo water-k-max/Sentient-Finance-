@@ -42,6 +42,8 @@ describe("OrderBook", function () {
     await orderBook.waitForDeployment();
 
     await marginVault.setAuthorized(await orderBook.getAddress(), true);
+    // F-02: the order book must be authorized on PerpEngine to record fills.
+    await perpEngine.setAuthorized(await orderBook.getAddress(), true);
   });
 
   async function fundTrader(trader: HardhatEthersSigner, amount: bigint) {

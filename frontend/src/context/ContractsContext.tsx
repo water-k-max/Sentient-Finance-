@@ -40,7 +40,10 @@ interface ContractsContextValue {
 }
 
 const SOMNIA_CHAIN_ID = 50312;
-const SOMNIA_CHAIN_HEX = "0xC478";
+// F-14 FIX: was hardcoded "0xC478" (== 50296, the wrong network), so
+// wallet_switchEthereumChain / wallet_addEthereumChain targeted a chain that
+// isn't Somnia testnet. Derive the hex from the id so they can never diverge.
+const SOMNIA_CHAIN_HEX = "0x" + SOMNIA_CHAIN_ID.toString(16); // 50312 -> 0xc488
 const SOMNIA_CHAIN_PARAMS = {
   chainId: SOMNIA_CHAIN_HEX,
   chainName: "Somnia Testnet",

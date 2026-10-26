@@ -45,14 +45,32 @@ contract PerpEngine {
     bytes32[] public allPairs;
     mapping(bytes32 => bool) public pairRegistered;
 
+    // F-02 FIX: explicit authorized set (order books + the oracle/engine relayer).
+    // The owner is authorized by construction so the legitimate deployer flow keeps
+    // working; every OrderBook must be authorized before its fills are accepted.
+    // This closes the permissionless setIndexPrice / recordFill holes that let
+    // anyone fabricate the index price or poison the VWAP mark-price buffer.
+    mapping(address => bool) public authorized;
+
     modifier onlyOwner() {
         require(msg.sender == owner, "PerpEngine: not owner");
+        _;
+    }
+
+    modifier onlyAuthorized() {
+        require(authorized[msg.sender], "PerpEngine: not authorized");
         _;
     }
 
     constructor(address _marginVault) {
         marginVault = IMarginVault(_marginVault);
         owner = msg.sender;
+        authorized[msg.sender] = true;
+    }
+
+    /// @notice Grant or revoke authorization (order books, oracle relayer). F-02.
+    function setAuthorized(address _addr, bool _ok) external onlyOwner {
+        authorized[_addr] = _ok;
     }
 
     /// @notice Register a new trading pair with its OrderBook
@@ -122,7 +140,11 @@ contract PerpEngine {
         int256 idxPriceSigned = int256Safe(idxPrice);
 
         int256 diff = markPrice - idxPriceSigned;
-        return (diff * 1e18) / idxPriceSigned / int256Safe(FUNDING_INTERVAL);
+        // F-10 FIX: the funding rate is a per-interval premium ratio. applyFunding
+        // is already gated to fire once per FUNDING_INTERVAL, so dividing by the
+        // interval (28800 s) a second time shrank the rate ~28800x and made funding
+        // effectively zero. Return (mark - index) / index, scaled to 1e18.
+        return (diff * 1e18) / idxPriceSigned;
     }
 
     /// @notice Apply funding payments between longs and shorts for a pair
@@ -138,10 +160,10 @@ contract PerpEngine {
         require(indexPrice > 0, "PerpEngine: no index price");
 
         // fundingRate is positive when longs pay shorts, negative when shorts pay longs
+        // F-10 FIX: removed the spurious second `/ FUNDING_INTERVAL` (see computeFundingRate).
         int256 fundingRate = (int256Safe(markPrice) - int256Safe(indexPrice))
             * 1e18
-            / int256Safe(indexPrice)
-            / int256Safe(FUNDING_INTERVAL);
+            / int256Safe(indexPrice);
 
         address[] memory traders = marginVault.getTrackedTraders();
         for (uint256 i = 0; i < traders.length; i++) {
@@ -169,14 +191,18 @@ contract PerpEngine {
         return _getMarkPrice(pairId);
     }
 
-    /// @notice Set index price for a pair (called by oracle adapter reactively)
-    function setIndexPrice(bytes32 pairId, uint256 price) external {
+    /// @notice Set index price for a pair (called by the authorized oracle relayer)
+    /// F-02 FIX: was permissionless. Now restricted to the authorized set.
+    function setIndexPrice(bytes32 pairId, uint256 price) external onlyAuthorized {
         require(price > 0, "PerpEngine: invalid price");
         indexPrices[pairId] = price;
     }
 
     /// @notice Record a fill for mark price computation — O(1) circular buffer
-    function recordFill(bytes32 pairId, uint256 price, uint256 size) external {
+    /// F-02 FIX: was permissionless; anyone could inject fake fills to steer the
+    /// VWAP mark price (and thus funding + liquidations). Now restricted to the
+    /// authorized order books / engine.
+    function recordFill(bytes32 pairId, uint256 price, uint256 size) external onlyAuthorized {
         uint256 count = fillCount[pairId];
         uint256 head = fillHead[pairId];
 

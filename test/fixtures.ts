@@ -93,6 +93,8 @@ export async function deployContracts(): Promise<DeployedContracts> {
 
   await marginVault.setAuthorized(await orderBook.getAddress(), true);
   await marginVault.setAuthorized(await sentinel.getAddress(), true);
+  // F-02: authorize the order book on PerpEngine so matched fills can be recorded.
+  await perpEngine.setAuthorized(await orderBook.getAddress(), true);
 
   const ORDER_PLACED_TOPIC = await agentInterface.ORDER_PLACED_TOPIC();
   const PRICE_UPDATED_TOPIC = await agentInterface.PRICE_UPDATED_TOPIC();

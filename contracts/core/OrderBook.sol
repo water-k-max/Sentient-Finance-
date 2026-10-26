@@ -227,6 +227,7 @@ contract OrderBook is IOrderBook {
 
     function _attemptMatch() internal {
         uint256 matchCount = 0;
+        uint256 selfMatchSkips = 0; // F-05: bounds the self-match scan
 
         while (
             bidHeap.length > 0 &&
@@ -248,9 +249,16 @@ contract OrderBook is IOrderBook {
             // The second _openPosition overwrites the first and the free margin
             // check fails. Skip the ask and look for a different counterparty.
             if (bid.trader == ask.trader) {
-                // Pop the ask temporarily and try the next one
-                // If no other ask exists or none cross, break out
-                if (askHeap.length <= 1) break;
+                // F-05 FIX: bound the self-match scan. The old guard swapped the
+                // root ask to the back and `continue`d without changing the bid or
+                // shrinking the ask heap, so a trader resting one bid plus two
+                // crossing asks made this loop oscillate forever — an out-of-gas
+                // DoS that bricked matching for the whole book. Cap the skips at
+                // the ask-heap size so the scan is O(n) and always terminates.
+                // (Production systems should additionally reject self-crossing at
+                // placement; see AUDIT_REPORT.md F-05.)
+                if (askHeap.length <= 1 || selfMatchSkips >= askHeap.length) break;
+                selfMatchSkips++;
                 // Swap best ask to back and check second-best
                 (askHeap[0], askHeap[askHeap.length - 1]) = (askHeap[askHeap.length - 1], askHeap[0]);
                 _siftDownAsk(0);
@@ -318,6 +326,7 @@ contract OrderBook is IOrderBook {
             }
 
             matchCount++;
+            selfMatchSkips = 0; // F-05: a real match resets the skip budget
             emit OrderMatched(bidId, askId, fillPrice, fillSize);
         }
     }

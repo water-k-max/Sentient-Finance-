@@ -32,7 +32,11 @@ contract OracleAdapter {
     }
 
     /// @notice Update price with a direct value (for mock feed)
-    function updatePriceDirect(uint256 price) external {
+    /// F-01 FIX: was permissionless — anyone could set the index price to an
+    /// arbitrary value and drive liquidation/PnL/funding off a fabricated number.
+    /// Restricted to the owner (the relayer/keeper key). For a trustless feed,
+    /// replace with a validated Chainlink/keeper-median read instead of a setter.
+    function updatePriceDirect(uint256 price) external onlyOwner {
         latestPrice = price;
         latestTimestamp = block.timestamp;
         emit PriceUpdated(assetId, price, block.timestamp);

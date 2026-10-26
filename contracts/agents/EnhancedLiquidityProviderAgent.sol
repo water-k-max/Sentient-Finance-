@@ -47,8 +47,24 @@ contract EnhancedLiquidityProviderAgent {
 
     bool public paused;
 
+    // F-08 FIX: the oracle-push callbacks were permissionless, so anyone could
+    // inject sentiment/volatility and steer (or brick) the market maker. Restrict
+    // them to an authorized set (the AgentInterface / SentimentOracle relayer);
+    // the deployer is authorized by construction so the owner path keeps working.
+    mapping(address => bool) public authorized;
+
+    // Upper bound on the volatility score. The spread formula computes
+    // (10000 - effectiveSpreadBps); an unbounded score makes effectiveSpread
+    // exceed 10000 and underflows (panic 0x11), bricking every rebalance.
+    uint256 public constant MAX_VOLATILITY_SCORE = 10000;
+
     modifier onlyOwner() {
         require(msg.sender == owner, "EnhancedLPAgent: not owner");
+        _;
+    }
+
+    modifier onlyAuthorized() {
+        require(authorized[msg.sender], "EnhancedLPAgent: not authorized");
         _;
     }
 
@@ -78,7 +94,13 @@ contract EnhancedLiquidityProviderAgent {
         sentimentOracle = SentimentOracle(_sentimentOracle);
         collateralToken = IERC20(_collateralToken);
         owner           = msg.sender;
+        authorized[msg.sender] = true; // F-08: deployer is authorized by construction
         rebalanceThreshold = 100; // 1% = 100 bps
+    }
+
+    /// @notice Grant or revoke authorization for oracle-push callbacks. F-08.
+    function setAuthorized(address _addr, bool _ok) external onlyOwner {
+        authorized[_addr] = _ok;
     }
 
     /// @notice Initialize with parameters and place first orders.
@@ -137,13 +159,17 @@ contract EnhancedLiquidityProviderAgent {
     }
 
     /// @notice Called by AgentInterface when SentimentOracle publishes new sentiment.
-    function onSentimentUpdate(string calldata newSentiment) external {
+    /// F-08 FIX: restricted to the authorized relayer set.
+    function onSentimentUpdate(string calldata newSentiment) external onlyAuthorized {
         sentimentMultiplierBps = _sentimentToMultiplier(newSentiment);
         emit SentimentReceived(newSentiment, sentimentMultiplierBps);
     }
 
     /// @notice Called by AgentInterface when SentimentOracle publishes new volatility.
-    function onVolatilityUpdate(uint256 score) external {
+    /// F-08 FIX: restricted to the authorized relayer set, and the score is bounded
+    /// so the spread formula's (10000 - effectiveSpreadBps) can never underflow.
+    function onVolatilityUpdate(uint256 score) external onlyAuthorized {
+        require(score <= MAX_VOLATILITY_SCORE, "EnhancedLPAgent: volatility out of range");
         lastVolatilityScore = score;
         emit VolatilityReceived(score);
     }
@@ -167,6 +193,10 @@ contract EnhancedLiquidityProviderAgent {
     }
 
     function _placeOrdersWithSpread(uint256 midPrice, uint256 effectiveSpreadBps) internal {
+        // F-08 defense-in-depth: clamp the spread so (10000 - effectiveSpreadBps)
+        // can never underflow, even if the pull-path oracle (_refreshOracleData)
+        // returns an extreme volatility score that bypassed onVolatilityUpdate.
+        if (effectiveSpreadBps >= 10000) effectiveSpreadBps = 9999;
         uint256 bidPrice = (midPrice * (10000 - effectiveSpreadBps)) / 10000;
         uint256 askPrice = (midPrice * (10000 + effectiveSpreadBps)) / 10000;
         require(bidPrice > 0, "EnhancedLPAgent: bid price too low");

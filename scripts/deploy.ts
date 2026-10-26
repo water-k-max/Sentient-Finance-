@@ -86,7 +86,10 @@ async function main() {
   for (const pair of pairs) {
     const pairId = ethers.keccak256(ethers.toUtf8Bytes(pair.name));
     await perpEngine.registerPair(pairId, pairAddresses[pair.name]);
-    console.log(`  → Registered ${pair.name} in PerpEngine`);
+    // F-02: authorize each order book on PerpEngine so matched fills can be
+    // recorded (recordFill is no longer permissionless).
+    await perpEngine.setAuthorized(pairAddresses[pair.name], true);
+    console.log(`  → Registered + authorized ${pair.name} in PerpEngine`);
   }
 
   // ── 7. LiquidationSentinel ──────────────────────────────────────────────────
@@ -181,6 +184,12 @@ async function main() {
   // PerpEngine calls adjustMargin() for applyFunding()
   await marginVault.setAuthorized(await perpEngine.getAddress(), true);
   console.log("  → PerpEngine authorized on MarginVault (applyFunding)");
+
+  // F-02: authorize the oracle relayer + reactive gateway to push index prices.
+  // setIndexPrice is no longer permissionless, so the legitimate feed must be granted.
+  await perpEngine.setAuthorized(await oracleAdapter.getAddress(), true);
+  await perpEngine.setAuthorized(await agentInterface.getAddress(), true);
+  console.log("  → OracleAdapter + AgentInterface authorized on PerpEngine (setIndexPrice)");
 
   // LP Agents call lockMargin / placeOrder indirectly — authorize both
   await marginVault.setAuthorized(lpAgentAddr, true);

@@ -85,6 +85,8 @@ describe("AgentIntegration", function () {
 
     await marginVault.setAuthorized(await orderBook.getAddress(), true);
     await marginVault.setAuthorized(await sentinel.getAddress(), true);
+    // F-02: the order book must be authorized on PerpEngine to record fills.
+    await perpEngine.setAuthorized(await orderBook.getAddress(), true);
 
     const ORDER_PLACED_TOPIC = await agentInterface.ORDER_PLACED_TOPIC();
     const PRICE_UPDATED_TOPIC = await agentInterface.PRICE_UPDATED_TOPIC();
